@@ -1,3 +1,5 @@
+CFLAGS = -g
+
 socksify: conntrack.o socksify.o
 
 clean:

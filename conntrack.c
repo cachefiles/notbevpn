@@ -179,10 +179,21 @@ typedef struct _nat_conntrack_t {
 } nat_conntrack_t;
 
 typedef struct _nat_conntrack_ops {
+	int (*adjust)(uint8_t *packet, int adjust);
 	int (*ip_nat)(tcp_state_t *tcpcb, uint8_t *packet);
 	nat_conntrack_t * (*lookup)(uint8_t *packet, uint16_t sport, uint16_t dport);
 	nat_conntrack_t * (*newconn)(uint8_t *packet, uint16_t sport, uint16_t dport);
 } nat_conntrack_ops;
+
+static int adjust_ipv4(uint8_t *packet, int adjust)
+{
+	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
+	uint16_t tlen   = htons(ip->ip_len) + adjust;
+	ip->ip_sum = update_cksum(ip->ip_sum, ip->ip_len - ntohs(tlen));
+	ip->ip_len = ntohs(tlen);
+
+	return 0;
+}
 
 static int ip_nat_ipv4(tcp_state_t *tcpcb, uint8_t *packet)
 {
@@ -247,6 +258,7 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 
 static nat_conntrack_ops ip_conntrack_ops = {
 	.ip_nat = ip_nat_ipv4,
+	.adjust = adjust_ipv4,
 	.lookup = lookup_ipv4,
 	.newconn = newconn_ipv4
 };
@@ -260,6 +272,13 @@ static int ip_nat_ipv6(tcp_state_t *tcpcb, uint8_t *packet)
 	ip6->ip6_hlim --;
 
 	return tcpcb->ip_sum;
+}
+
+static int adjust_ipv6(uint8_t *packet, int adjust)
+{
+	nat_ip6hdr_t *ip = (nat_ip6hdr_t *)packet;
+	ip->ip6_plen += adjust;
+	return 0;
 }
 
 struct nat_conntrack_q _ipv6_header = LIST_HEAD_INITIALIZER(_ipv6_header);
@@ -338,12 +357,14 @@ static nat_conntrack_t * newconn_nat(uint8_t *packet, uint16_t sport, uint16_t d
 
 static nat_conntrack_ops cok_conntrack_ops = {
 	.ip_nat = ip_nat_ipv4,
+	.adjust = adjust_ipv4,
 	.lookup = lookup_nat,
 	.newconn = newconn_nat
 };
 
 static nat_conntrack_ops cok6_conntrack_ops = {
 	.ip_nat = ip_nat_ipv6,
+	.adjust = adjust_ipv6,
 	.lookup = lookup_nat,
 	.newconn = newconn_nat
 };
@@ -509,6 +530,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 				/* nat: client -> server, dec seq=seq - inject length */
 				h1.th_seq  = ntohl(th->th_seq);
 				conn->c.snd_max = h1.th_seq;
+				conn->c.seq_meta = h1.th_seq +1;
 
 				th->th_seq = htonl(h1.th_seq - inject_len);
 				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
@@ -536,9 +558,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 				new_len_flag = *(uint16_t *) m_off(th, 12);
 				th->th_sum = update_cksum(th->th_sum, old_len_flag - new_len_flag);
 
-				tlen = ntohs(ip->ip_len) + sublen;
-				ip->ip_sum = update_cksum(ip->ip_sum, ip->ip_len - ntohs(tlen));
-				ip->ip_len = ntohs(tlen);
+				(*ops->adjust)(packet, sublen);
 				break;
 
 			case TCPS_ESTABLISHED:
@@ -559,10 +579,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 						SEQ_GEQ(conn->s.seq_meta, h1.th_ack)) {
 					th->th_ack = htonl(conn->s.snd_max);
 					th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
-				} else {
-#if 0
 					fprintf(stderr, "from client snd_max %x th_ack %x\n", conn->s.snd_max, h1.th_ack);
-#endif
 				}
 				break;
 
@@ -573,6 +590,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 				break;
 		}
 	} else {
+		int data_acked;
 		int seglen, datalen;
 		uint16_t old_len_flag, new_len_flag;
 		int state = tcp_state(th->th_flags);
@@ -608,7 +626,9 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 					conn->s.snd_max = h1.th_seq + datalen;
 				}
 
-				if (SEQ_LT(h1.th_seq, conn->c.rcv_nxt) && !CHECK_FLAGS(th->th_flags, TH_FIN)) {
+				if (SEQ_LT(h1.th_seq, conn->c.rcv_nxt) &&
+						SEQ_LT(h1.th_seq, conn->s.seq_meta) &&
+						SEQ_GEQ(h1.th_seq, conn->s.seq_meta - 12)) {
 					if (SEQ_LT(conn->c.rcv_nxt, h1.th_seq + datalen)) {
 #if 0
 						int adj = (int)(conn->c.rcv_nxt - th->th_seq);
@@ -617,45 +637,22 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 						memmove(mem, mem + adj, datalen - adj);
 						len -= adj;
 #endif
-						abort();
-					} else if (conn->c.rcv_nxt == h1.th_seq + datalen) {
-						if (datalen > 0) {
-							th->th_seq = htonl(conn->c.rcv_nxt -1);
-							th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
-						} else {
-							th->th_seq = htonl(conn->c.rcv_nxt);
-							th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
-						}
+						assert(0);
+					} else if (datalen > 0 || SEQ_GEQ(h1.th_ack, conn->c.seq_meta)) {
+						th->th_seq = htonl(conn->c.rcv_nxt -(datalen > 0));
+						th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
 
 						th->th_sum = update_cksum(th->th_sum, -cksum_delta(m_off(packet, len - datalen), datalen));
 						th->th_sum = update_cksum(th->th_sum, htons(datalen + (th->th_off << 2)) - htons(th->th_off << 2));
 						len -= datalen;
 
-						uint16_t tlen = htons(ip->ip_len) - datalen;
-						ip->ip_sum = update_cksum(ip->ip_sum, ip->ip_len - ntohs(tlen));
-						ip->ip_len = ntohs(tlen);
-
-						fprintf(stderr, "finish ack num: %x, datalen: %d\n", h1.th_seq, datalen);
+						(*ops->adjust)(packet, -datalen);
 					} else {
-						fprintf(stderr, "send ack now: th_seq: %x nxt_seq %x, rcv_nxt %x datalen %d\n",
-								h1.th_seq, h1.th_seq + datalen, conn->c.rcv_nxt, datalen);
-						if (datalen > 0) {
-							th->th_seq = htonl(conn->c.rcv_nxt -1);
-							th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
-						} else {
-							th->th_seq = htonl(conn->c.rcv_nxt);
-							th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
-						}
-
-						th->th_sum = update_cksum(th->th_sum, -cksum_delta(m_off(packet, len - datalen), datalen));
-						th->th_sum = update_cksum(th->th_sum, htons(datalen + (th->th_off << 2)) - htons(th->th_off << 2));
-						len -= datalen;
-
-						uint16_t tlen = htons(ip->ip_len) - datalen;
-						ip->ip_sum = update_cksum(ip->ip_sum, ip->ip_len - ntohs(tlen));
-						ip->ip_len = ntohs(tlen);
+						fprintf(stderr, "just ignore\n");
+						return 0;
 					}
 				}
+
 				break;
 
 			case TCPS_CLOSED:
