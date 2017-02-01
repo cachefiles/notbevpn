@@ -545,6 +545,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 				h1.th_seq  = ntohl(th->th_seq);
 				conn->c.snd_max = h1.th_seq;
 				conn->c.seq_meta = h1.th_seq +1;
+				conn->c.flags   |= NEED_ACK_ADJUST;
 
 				sublen = socks5_cmd(m_off(packet, len), ip, th);
 				th->th_seq = htonl(h1.th_seq - sublen);
@@ -582,6 +583,9 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 
 				if (SEQ_LT(conn->c.rcv_nxt, h1.th_ack)) {
 					conn->c.rcv_nxt = h1.th_ack;
+					if (SEQ_LT(conn->c.seq_meta, conn->c.rcv_nxt)) {
+						conn->c.flags &= ~NEED_ACK_ADJUST;
+					}
 				}
 
 				h1.th_flags = th->th_flags;
@@ -648,10 +652,11 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 					}
 				}
 
-				if (SEQ_LT(h1.th_seq, conn->c.rcv_nxt) &&
-						(conn->last_meta + 120 > time(NULL)) &&
-						SEQ_LT(h1.th_seq, conn->s.seq_meta) &&
-						SEQ_GEQ(h1.th_seq, conn->s.seq_meta - 12)) {
+				if (((conn->c.flags & NEED_ACK_ADJUST) ||
+							(conn->last_meta + 120 > time(NULL))) &&
+							SEQ_LT(h1.th_seq, conn->c.rcv_nxt) &&
+							SEQ_LT(h1.th_seq, conn->s.seq_meta) &&
+							SEQ_GEQ(h1.th_seq, conn->s.seq_meta - 12)) {
 					conn->last_meta = time(NULL);
 					if (SEQ_LT(conn->c.rcv_nxt, h1.th_seq + datalen)) {
 						int off = (th->th_off << 2);
