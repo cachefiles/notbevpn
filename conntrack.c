@@ -79,9 +79,17 @@ typedef struct _tcp_state_t {
 #define NAT_S_ADDR _nat_s_addr
 #define NAT_S_PORT _nat_s_port
 
+#define WEB_PORT  htons(80)
+#define SSL_PORT htons(443)
+
+#define NAT_WEB_PORT _nat_web_port
+#define NAT_SSL_PORT _nat_ssl_port
+
 static u_long _nat_c_addr = 0;
 static u_long _nat_s_addr = 0;
 static u_short _nat_s_port = 0;
+static u_short _nat_web_port = 0;
+static u_short _nat_ssl_port = 0;
 static nat_ip6hdr_t ip6_tpl = {0};
 
 static int init_ip6_tpl(nat_ip6hdr_t *tpl)
@@ -149,8 +157,19 @@ static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6)
 	s->ip_sum = 0;
 
 	if (is_ipv6) {
+		src = (uint16_t *)&c->ip6_src;
+		nats = (uint16_t *)&s->ip6_dst;
+
+		dst = (uint16_t *)&c->ip6_dst;
+		natd = (uint16_t *)&s->ip6_src;
+
 		for (i = 0; i < 8; i++) {
+			s->ip_sum += (src[i] - nats[i]);
+			s->ip_sum += (dst[i] - natd[i]);
 		}
+
+		s->th_sum = s->ip_sum;
+		assert(0);
 	} else {
 		src = (uint16_t *)&c->ip_src;
 		nats = (uint16_t *)&s->ip_dst;
@@ -374,6 +393,46 @@ static nat_conntrack_ops cok6_conntrack_ops = {
 	.newconn = newconn_nat
 };
 
+static int ip_nat_fast(tcp_state_t *tcpcb, uint8_t *packet)
+{
+	uint16_t d0, d1;
+	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
+	xchg(ip->ip_src, ip->ip_dst, struct in_addr);
+	return 0;
+}
+
+static nat_conntrack_t * lookup_fast(uint8_t *packet, uint16_t sport, uint16_t dport)
+{
+	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
+	static nat_conntrack_t st;
+	
+	if (sport == NAT_SSL_PORT) {
+		st.c.th_dport = SSL_PORT;
+		st.c.th_sport = dport;
+	} else if (sport == NAT_WEB_PORT) {
+		st.c.th_dport = WEB_PORT;
+		st.c.th_sport = dport;
+	} else if (dport == SSL_PORT) {
+		st.c.th_sport = NAT_SSL_PORT;
+		st.c.th_dport = sport;
+	} else if (dport == WEB_PORT) {
+		st.c.th_sport = NAT_WEB_PORT;
+		st.c.th_dport = sport;
+	}
+
+	st.c.th_sum  = sport - st.c.th_sport;
+	st.c.th_sum += dport - st.c.th_dport;
+
+	return &st;
+}
+
+static nat_conntrack_ops fast_conntrack_ops = {
+	.ip_nat = ip_nat_fast,
+	.adjust = NULL,
+	.lookup = lookup_fast,
+	.newconn = NULL
+};
+
 void *m_off(void *ptr, int off) 
 {
 	uint8_t *m = (uint8_t *)ptr;
@@ -382,6 +441,8 @@ void *m_off(void *ptr, int off)
 
 #define NAT_MODE_CLIENT_TO_SERVER 0x2
 #define NAT_MODE_SERVER_TO_CLIENT 0x3
+#define NAT_MODE_STATELESS_FAST   0x4
+#define NAT_MODE_NOT_SUPPORT      0x5
 
 static int nat_get_mode(const nat_iphdr_t *ip, const nat_tcphdr_t *th, nat_conntrack_ops **ops)
 {
@@ -390,6 +451,19 @@ static int nat_get_mode(const nat_iphdr_t *ip, const nat_tcphdr_t *th, nat_connt
 			ip->ip_src.s_addr == NAT_S_ADDR && th->th_sport == NAT_S_PORT) {
 		*ops = &cok_conntrack_ops;
 		return NAT_MODE_SERVER_TO_CLIENT;
+	}
+
+	if (ip->ip_v == VERSION_IPV4 &&
+			ip->ip_dst.s_addr != NAT_C_ADDR &&
+			ip->ip_src.s_addr == NAT_S_ADDR &&
+			(th->th_sport == NAT_WEB_PORT || th->th_dport == WEB_PORT ||
+			 th->th_sport == NAT_SSL_PORT || th->th_dport == SSL_PORT)) {
+		*ops = &fast_conntrack_ops;
+		return NAT_MODE_STATELESS_FAST;
+	}
+
+	if (ip->ip_dst.s_addr == NAT_C_ADDR) {
+		return NAT_MODE_NOT_SUPPORT;
 	}
 
 	return NAT_MODE_CLIENT_TO_SERVER;
@@ -620,7 +694,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 			default:
 				break;
 		}
-	} else {
+	} else if (nat_mode == NAT_MODE_SERVER_TO_CLIENT) {
 		int data_acked;
 		int datalen, seq_flag;
 		uint16_t old_len_flag, new_len_flag;
@@ -714,6 +788,12 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 				break;
 			
 		}
+	} else if (nat_mode == NAT_MODE_STATELESS_FAST) {
+		/* state less, fast nat process */
+		tcpcb = &conn->c;
+	} else {
+		/* reset unsupport tcp connection */
+		return tcp_frag_rst(th, packet);
 	}
 
 	/* process NAPT, update tcp src port and dst port, update src ip and dest ip also. */
@@ -730,6 +810,9 @@ void module_init(void)
 	_nat_c_addr = inet_addr("10.2.0.15");
 	_nat_s_addr = inet_addr("10.2.0.2");
 	_nat_s_port = htons(8000);
+
+	_nat_ssl_port = htons(8080);
+	_nat_web_port = htons(8443);
 	init_ip6_tpl(&ip6_tpl);
 
 	return;
