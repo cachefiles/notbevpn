@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <time.h>
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -33,6 +34,7 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 
 #define VERSION_IPV4 4
 #define VERSION_IPV6 6
+#define NEED_ACK_ADJUST 0x08
 
 #define d_off(ptr, base) (((uint8_t *)ptr) - ((uint8_t *)base))
 
@@ -52,6 +54,7 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 #define log_error printf
 
 typedef struct _tcp_state_t {
+	int flags;
 	int state;
 	int rcv_win;
 	tcp_seq rcv_nxt;
@@ -173,6 +176,8 @@ static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6)
 
 typedef struct _nat_conntrack_t {
 	int is_ipv6;
+	int last_meta;
+	int last_alive;
 	tcp_state_t c; /* client side tcp state */
 	tcp_state_t s; /* server side tcp state */
 	LIST_ENTRY(_nat_conntrack_t) entry;
@@ -429,6 +434,8 @@ static int tcp_state(int tcpflags)
 
 ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 {
+	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
+
 	th->th_flags = TH_RST;
 	th->th_off = (sizeof(*th) >> 2);
 	th->th_seq = th->th_ack;
@@ -438,9 +445,16 @@ ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 	th->th_sum = 0;
 
 	xchg(th->th_sport, th->th_dport, u_int16_t);
+	th->th_sum = update_cksum(0xffff, cksum_delta(th, sizeof(*th)));
 
 	/* TODO: update tcp/ip checksum */
-	return sizeof(*th) + d_off(th, packet);
+
+	ip->ip_sum = 0;
+	ip->ip_len = htons(d_off(th +1, packet));
+	xchg(ip->ip_src, ip->ip_dst, struct in_addr);
+	ip->ip_sum = update_cksum(0xffff, cksum_delta(packet, sizeof(*ip)));
+
+	return d_off(th +1, packet);
 }
 
 static int socks5_cmd(void *buf, nat_iphdr_t *ip, nat_tcphdr_t *tcp)
@@ -520,7 +534,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 
 	if (nat_mode == NAT_MODE_CLIENT_TO_SERVER) {
 		uint16_t tlen;
-		int sublen, seglen, datalen;
+		int sublen, datalen, seq_flag;
 		uint16_t old_len_flag, new_len_flag;
 		int state = tcp_state(th->th_flags);
 
@@ -532,7 +546,8 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 				conn->c.snd_max = h1.th_seq;
 				conn->c.seq_meta = h1.th_seq +1;
 
-				th->th_seq = htonl(h1.th_seq - inject_len);
+				sublen = socks5_cmd(m_off(packet, len), ip, th);
+				th->th_seq = htonl(h1.th_seq - sublen);
 				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
 				break;
 
@@ -548,9 +563,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 				th->th_seq = htonl(h1.th_seq - sublen + 1);
 				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
 				th->th_sum = update_cksum(th->th_sum, cksum_delta(m_off(packet, len), sublen));
-				
-				seglen = d_off(m_off(packet, len), th);
-				th->th_sum = update_cksum(th->th_sum, htons(seglen) - htons(seglen + sublen));
+				th->th_sum = update_cksum(th->th_sum, -htons(sublen));
 				len += sublen;
 
 				old_len_flag = *(uint16_t *) m_off(th, 12);
@@ -571,12 +584,14 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 					conn->c.rcv_nxt = h1.th_ack;
 				}
 
-				if (SEQ_LT(conn->c.snd_max, h1.th_seq + datalen)) {
-					conn->c.snd_max = h1.th_seq + datalen;
+				h1.th_flags = th->th_flags;
+				seq_flag = (CHECK_FLAGS(h1.th_flags, TH_SYN) > 0) + (CHECK_FLAGS(h1.th_flags, TH_FIN) > 0);
+				if (SEQ_LT(conn->c.snd_max, h1.th_seq + datalen + seq_flag)) {
+					conn->c.snd_max = h1.th_seq + datalen + seq_flag;
 				}
 
-				if (SEQ_LT(conn->s.snd_max, h1.th_ack) &&
-						SEQ_GEQ(conn->s.seq_meta, h1.th_ack)) {
+				if ((conn->s.flags & NEED_ACK_ADJUST) &&
+						SEQ_GEQ(h1.th_ack, conn->s.seq_meta)) {
 					th->th_ack = htonl(conn->s.snd_max);
 					th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
 					fprintf(stderr, "from client snd_max %x th_ack %x\n", conn->s.snd_max, h1.th_ack);
@@ -591,7 +606,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 		}
 	} else {
 		int data_acked;
-		int seglen, datalen;
+		int datalen, seq_flag;
 		uint16_t old_len_flag, new_len_flag;
 		int state = tcp_state(th->th_flags);
 
@@ -602,6 +617,8 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 				h1.th_seq  = ntohl(th->th_seq);
 				conn->s.snd_max = h1.th_seq +1;
 				conn->s.seq_meta = h1.th_seq +13;
+				conn->last_meta  = time(NULL);
+				conn->s.flags   |= NEED_ACK_ADJUST;
 
 				th->th_seq = htonl(h1.th_seq + 12);
 				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
@@ -622,28 +639,40 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 					conn->s.rcv_nxt = h1.th_ack;
 				}
 
-				if (SEQ_LT(conn->s.snd_max, h1.th_seq + datalen)) {
-					conn->s.snd_max = h1.th_seq + datalen;
+				h1.th_flags = th->th_flags;
+				seq_flag = (CHECK_FLAGS(h1.th_flags, TH_SYN) > 0) + (CHECK_FLAGS(h1.th_flags, TH_FIN) > 0);
+				if (SEQ_LT(conn->s.snd_max, h1.th_seq + datalen + seq_flag)) {
+					conn->s.snd_max = h1.th_seq + datalen + seq_flag;
+					if (SEQ_LT(conn->s.seq_meta, conn->s.snd_max)) {
+						conn->s.flags &= ~NEED_ACK_ADJUST;
+					}
 				}
 
 				if (SEQ_LT(h1.th_seq, conn->c.rcv_nxt) &&
+						(conn->last_meta + 120 > time(NULL)) &&
 						SEQ_LT(h1.th_seq, conn->s.seq_meta) &&
 						SEQ_GEQ(h1.th_seq, conn->s.seq_meta - 12)) {
+					conn->last_meta = time(NULL);
 					if (SEQ_LT(conn->c.rcv_nxt, h1.th_seq + datalen)) {
-#if 0
-						int adj = (int)(conn->c.rcv_nxt - th->th_seq);
-						th->th_seq = htonl(h1.th_seq + adj);
-						uint8_t *mem = m_off(th, th->th_off << 2);
+						int off = (th->th_off << 2);
+						int adj = (int)(conn->c.rcv_nxt - h1.th_seq);
+						th->th_seq = htonl(conn->c.rcv_nxt);
+						th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
+
+						uint8_t *mem = m_off(th, off);
+						th->th_sum = update_cksum(th->th_sum, -cksum_delta(mem, adj));
+						th->th_sum = update_cksum(th->th_sum, htons(adj));
 						memmove(mem, mem + adj, datalen - adj);
 						len -= adj;
-#endif
-						assert(0);
+
+						(*ops->adjust)(packet, -adj);
+						assert(1 & ~adj);
 					} else if (datalen > 0 || SEQ_GEQ(h1.th_ack, conn->c.seq_meta)) {
-						th->th_seq = htonl(conn->c.rcv_nxt -(datalen > 0));
+						th->th_seq = htonl(conn->c.rcv_nxt -(datalen > 0 && CHECK_FLAGS(th->th_flags, TH_ACK| TH_FIN) == TH_ACK));
 						th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
 
 						th->th_sum = update_cksum(th->th_sum, -cksum_delta(m_off(packet, len - datalen), datalen));
-						th->th_sum = update_cksum(th->th_sum, htons(datalen + (th->th_off << 2)) - htons(th->th_off << 2));
+						th->th_sum = update_cksum(th->th_sum, htons(datalen));
 						len -= datalen;
 
 						(*ops->adjust)(packet, -datalen);
