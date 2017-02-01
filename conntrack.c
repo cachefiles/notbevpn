@@ -139,16 +139,74 @@ static uint16_t update_cksum(uint16_t old, int delta)
     }
 }
 
-static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6)
+static int _nat_count = 0;
+static unsigned short _nat_port = 1024;
+static uint32_t _nat_port_bitmap[65536 / 32] = {0};
+
+static uint16_t use_nat_port(uint16_t port)
+{
+	int index = (port / 32);
+	int offset = (port % 32);
+
+	uint32_t old = _nat_port_bitmap[index];
+	_nat_port_bitmap[index] |= (1 << offset);
+	assert(old != _nat_port_bitmap[index]);
+	_nat_count++;
+
+	return htons(port);
+}
+
+static uint16_t alloc_nat_port()
+{
+	int index, offset;
+
+	if (_nat_count + 1024 >= 65536) {
+		return 0;
+	}
+
+	do {
+		if (_nat_port < 1024) {
+			_nat_port = 1024;
+			continue;
+		}
+
+		_nat_port += (rand() % 17);
+
+		index = (_nat_port / 32);
+		if (_nat_port_bitmap[index] == 0xffffffff) {
+			_nat_port = (index * 32);
+			continue;
+		}
+
+		offset = (_nat_port % 32);
+	} while (_nat_port_bitmap[index] & (1 << offset));
+
+	return _nat_port;
+}
+
+static uint16_t free_nat_port(uint16_t port)
+{
+	int index, offset;
+
+	port = htons(port);
+	index = (port / 32);
+	offset = (port % 32);
+
+	_nat_port_bitmap[index] &= ~(1 << offset);
+	_nat_count--;
+
+	return 0;
+}
+
+static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6, uint16_t port)
 {
 	int i;
 	uint16_t *src, *dst;
 	uint16_t *nats, *natd;
-	static unsigned port = 1024;
 
 	s->ip_dst.s_addr = NAT_C_ADDR;
 	s->ip_src.s_addr = NAT_S_ADDR;
-	s->th_dport = htons(port++);
+	s->th_dport = use_nat_port(port);
 	s->th_sport = (NAT_S_PORT);
 
 	s->th_sum = 0;
@@ -194,7 +252,7 @@ static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6)
 typedef struct _nat_conntrack_t {
 	int is_ipv6;
 	int last_meta;
-	int last_alive;
+	time_t last_alive;
 	tcp_state_t c; /* client side tcp state */
 	tcp_state_t s; /* server side tcp state */
 	LIST_ENTRY(_nat_conntrack_t) entry;
@@ -251,6 +309,7 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 
 		if (item->c.ip_src.s_addr == ip->ip_src.s_addr &&
 				item->c.ip_dst.s_addr == ip->ip_dst.s_addr) {
+			item->last_alive = time(NULL);
 			return item;
 		}
 	}
@@ -260,38 +319,57 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 
 static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t dport)
 {
+	time_t now;
 	nat_iphdr_t *ip;
-	nat_conntrack_t *conn = ALLOC_NEW(nat_conntrack_t);
+	nat_conntrack_t *conn;
+	unsigned short nat_port = alloc_nat_port();
+
+	now = time(NULL);
+	if (nat_port == 0) {
+		conn = NULL;
+		goto free_conn;
+	}
+
+	conn = ALLOC_NEW(nat_conntrack_t);
 
 	if (conn != NULL) {
 		ip = (nat_iphdr_t *)packet;
 
+		conn->last_alive = now;
 		conn->c.th_sport = sport;
 		conn->c.th_dport = dport;
 
 		conn->c.ip_src = ip->ip_src;
 		conn->c.ip_dst = ip->ip_dst;
 
-		alloc_nat_slot(&conn->s, &conn->c, 0);
+		alloc_nat_slot(&conn->s, &conn->c, 0, nat_port);
 		LIST_INSERT_HEAD(&_ipv4_header, conn, entry);
 	}
 
-	time_t now = time(NULL);
-	if (now < _ipv4_gc_time || now + 120 < _ipv4_gc_time) {
+free_conn:
+	if (now < _ipv4_gc_time || now > _ipv4_gc_time + 120) {
 		nat_conntrack_t *item, *next;
 
 		_ipv4_gc_time = now;
 		LIST_FOREACH_SAFE(item, &_ipv4_header, entry, next) {
+			if (item == conn) {
+				continue;
+			}
+
 			if ((item->last_alive > now) ||
-					((item->last_alive + 180) < now) ||
-					(((item->last_alive + 60) < now) &&
-					 (item->c.flags & TH_FIN) && (item->s.flags & TH_FIN))) {
-				log_verbose("free dead connection: %p\n", item);
+					(item->last_alive + 1800 < now) ||
+					((item->c.flags| item->s.flags) & TH_RST) ||
+					((item->last_alive + 60 < now) && (item->c.flags & TH_FIN) && (item->s.flags & TH_FIN))) {
+				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _nat_count, now, item->last_alive);
+				log_verbose("connection: cflags %x sflags %x fin %x rst %x\n", item->c.flags, item->s.flags, TH_FIN, TH_RST);
+				free_nat_port(item->s.th_dport);
 				LIST_REMOVE(item, entry);
+				free(item);
 			}
 		}
 	}
 
+	log_verbose("new connection: %p, %d\n", conn, _nat_count);
 	return conn;
 }
 
@@ -337,6 +415,7 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 
 		if (0 == memcmp(&item->c.ip_src, &ip->ip6_src, sizeof(ip->ip6_src)) &&
 				0 == memcmp(&item->c.ip_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
+			item->last_alive = time(NULL);
 			return item;
 		}
 	}
@@ -346,24 +425,35 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 
 static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t dport)
 {
+	time_t now;
 	nat_ip6hdr_t *ip;
-	nat_conntrack_t *conn = ALLOC_NEW(nat_conntrack_t);
+	nat_conntrack_t *conn;
+	unsigned short nat_port = alloc_nat_port();
 
+	now = time(NULL);
+	if (nat_port == 0) {
+		conn = NULL;
+		goto free_conn;
+	}
+
+	conn = ALLOC_NEW(nat_conntrack_t);
 	if (conn != NULL) {
 		ip = (nat_ip6hdr_t *)packet;
 
+		conn->last_alive = now;
 		conn->c.th_sport = sport;
 		conn->c.th_dport = dport;
 
 		conn->c.ip6_src = ip->ip6_src;
 		conn->c.ip6_dst = ip->ip6_dst;
 
-		alloc_nat_slot(&conn->s, &conn->c, 1);
+		alloc_nat_slot(&conn->s, &conn->c, 1, nat_port);
 		LIST_INSERT_HEAD(&_ipv6_header, conn, entry);
 	}
 
-	time_t now = time(NULL);
-	if (now > _ipv6_gc_time || now + 120 < _ipv6_gc_time) {
+free_conn:
+	if (now < _ipv6_gc_time || now > _ipv6_gc_time + 120) {
+		_ipv6_gc_time = now;
 	}
 
 	return conn;
@@ -612,7 +702,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 		ops = (nat_conntrack_ops *)&ip6_conntrack_ops;
 		nat_mode = NAT_MODE_CLIENT_TO_SERVER;
 	} else {
-		log_error("invlid ip protocol version: %d", ip->ip_v);
+		log_error("invlid ip protocol version: %d\n", ip->ip_v);
 		return 0;
 	}
 
@@ -620,22 +710,25 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 
 	if (conn == NULL) {
 		if (th->th_flags & TH_RST) {
-			log_verbose("receive RST packet without connection");
+			log_verbose("receive RST packet without connection\n");
 			return 0;
 		}
 
 		if (th->th_flags & TH_ACK) {
-			log_error("receive ACK packet without connection");
+			log_error("receive ACK packet without connection\n");
 			return tcp_frag_rst(th, packet);
 		}
 
 		if (!CHECK_FLAGS(th->th_flags, TH_SYN)) {
-			log_verbose("receive SYN packet without connection");
+			log_verbose("receive ACK packet without connection\n");
 			return 0;
 		}
 
 		conn = (*ops->newconn)(packet, th->th_sport, th->th_dport);
-		CHECK_NAT_FAIL_RETURN(conn != NULL);
+		if (conn == NULL) {
+			log_verbose("receive SYN packet without connection, no availiable port\n");
+			return tcp_frag_rst(th, packet);
+		}
 	}
 
 	if (nat_mode == NAT_MODE_CLIENT_TO_SERVER) {
@@ -704,7 +797,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 						SEQ_GEQ(h1.th_ack, conn->s.seq_meta)) {
 					th->th_ack = htonl(conn->s.snd_max);
 					th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
-					fprintf(stderr, "from client snd_max %x th_ack %x\n", conn->s.snd_max, h1.th_ack);
+					log_verbose("from client snd_max %x th_ack %x\n", conn->s.snd_max, h1.th_ack);
 				}
 				break;
 
@@ -788,7 +881,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 
 						(*ops->adjust)(packet, -datalen);
 					} else {
-						fprintf(stderr, "just ignore\n");
+						log_verbose("just ignore\n");
 						return 0;
 					}
 				}
