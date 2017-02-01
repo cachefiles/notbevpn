@@ -34,7 +34,7 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 
 #define VERSION_IPV4 4
 #define VERSION_IPV6 6
-#define NEED_ACK_ADJUST 0x08
+#define NEED_ACK_ADJUST 0x100
 
 #define d_off(ptr, base) ((uint8_t *)(ptr) - (uint8_t *)(base))
 
@@ -55,8 +55,6 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 
 typedef struct _tcp_state_t {
 	int flags;
-	int state;
-	int rcv_win;
 	tcp_seq rcv_nxt;
 	tcp_seq snd_max;
 	tcp_seq seq_meta;
@@ -236,6 +234,7 @@ static int ip_nat_ipv4(tcp_state_t *tcpcb, uint8_t *packet)
 	return tcpcb->ip_sum;
 }
 
+static time_t _ipv4_gc_time = 0;
 LIST_HEAD(nat_conntrack_q, _nat_conntrack_t) _ipv4_header = LIST_HEAD_INITIALIZER(_ipv4_header);
 
 static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t dport)
@@ -277,6 +276,22 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 		LIST_INSERT_HEAD(&_ipv4_header, conn, entry);
 	}
 
+	time_t now = time(NULL);
+	if (now < _ipv4_gc_time || now + 120 < _ipv4_gc_time) {
+		nat_conntrack_t *item, *next;
+
+		_ipv4_gc_time = now;
+		LIST_FOREACH_SAFE(item, &_ipv4_header, entry, next) {
+			if ((item->last_alive > now) ||
+					((item->last_alive + 180) < now) ||
+					(((item->last_alive + 60) < now) &&
+					 (item->c.flags & TH_FIN) && (item->s.flags & TH_FIN))) {
+				log_verbose("free dead connection: %p\n", item);
+				LIST_REMOVE(item, entry);
+			}
+		}
+	}
+
 	return conn;
 }
 
@@ -305,6 +320,7 @@ static int adjust_ipv6(uint8_t *packet, int adjust)
 	return 0;
 }
 
+static time_t _ipv6_gc_time = 0;
 struct nat_conntrack_q _ipv6_header = LIST_HEAD_INITIALIZER(_ipv6_header);
 
 static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t dport)
@@ -344,6 +360,10 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 
 		alloc_nat_slot(&conn->s, &conn->c, 1);
 		LIST_INSERT_HEAD(&_ipv6_header, conn, entry);
+	}
+
+	time_t now = time(NULL);
+	if (now > _ipv6_gc_time || now + 120 < _ipv6_gc_time) {
 	}
 
 	return conn;
@@ -796,6 +816,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 		return tcp_frag_rst(th, packet);
 	}
 
+	tcpcb->flags |= th->th_flags;
 	/* process NAPT, update tcp src port and dst port, update src ip and dest ip also. */
 	(*ops->ip_nat)(tcpcb, packet);
 	th->th_sport = tcpcb->th_dport;
