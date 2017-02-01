@@ -36,7 +36,7 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 #define VERSION_IPV6 6
 #define NEED_ACK_ADJUST 0x08
 
-#define d_off(ptr, base) (((uint8_t *)ptr) - ((uint8_t *)base))
+#define d_off(ptr, base) ((uint8_t *)(ptr) - (uint8_t *)(base))
 
 #define CHECK_NAT_PROTOCOL(proto, expect) \
 	do { if ((proto) != (expect)) return 0; } while (0)
@@ -434,23 +434,35 @@ static int tcp_state(int tcpflags)
 
 ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 {
+	int acc = 0;
+	int flags = th->th_flags;
 	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 
-	th->th_flags = TH_RST;
+	if (flags & TH_ACK) {
+		th->th_flags = TH_RST;
+		th->th_seq = th->th_ack;
+		th->th_ack = 0;
+	} else {
+		th->th_flags = (TH_RST| TH_ACK);
+		th->th_ack = htonl(ntohl(th->th_seq) + 1);
+		th->th_seq = 0;
+	}
+
 	th->th_off = (sizeof(*th) >> 2);
-	th->th_seq = th->th_ack;
-	th->th_ack = 0;
 	th->th_urp = 0;
 	th->th_win = 0;
 	th->th_sum = 0;
 
 	xchg(th->th_sport, th->th_dport, u_int16_t);
 	th->th_sum = update_cksum(0xffff, cksum_delta(th, sizeof(*th)));
+	th->th_sum = update_cksum(th->th_sum, cksum_long_delta(0xffffffff, ip->ip_src.s_addr));
+	th->th_sum = update_cksum(th->th_sum, cksum_long_delta(0xffffffff, ip->ip_dst.s_addr));
+	th->th_sum = update_cksum(th->th_sum, -htons(6 + sizeof(*th)));
 
 	/* TODO: update tcp/ip checksum */
 
 	ip->ip_sum = 0;
-	ip->ip_len = htons(d_off(th +1, packet));
+	ip->ip_len = ntohs(d_off(th +1, packet));
 	xchg(ip->ip_src, ip->ip_dst, struct in_addr);
 	ip->ip_sum = update_cksum(0xffff, cksum_delta(packet, sizeof(*ip)));
 
