@@ -356,10 +356,16 @@ free_conn:
 				continue;
 			}
 
+			int cflags = item->c.flags;
+			int sflags = item->s.flags;
+			int mflags = (TH_SYN| TH_FIN);
+			int s_established = (sflags & mflags) == TH_SYN;
+			int c_established = (cflags & mflags) == TH_SYN;
+			int timeout = (s_established && c_established)? 60: 1800;
+
 			if ((item->last_alive > now) ||
-					(item->last_alive + 1800 < now) ||
-					((item->c.flags| item->s.flags) & TH_RST) ||
-					((item->last_alive + 60 < now) && (item->c.flags & TH_FIN) && (item->s.flags & TH_FIN))) {
+					((cflags| sflags) & TH_RST) ||
+					(item->last_alive + timeout < now)) {
 				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _nat_count, now, item->last_alive);
 				log_verbose("connection: cflags %x sflags %x fin %x rst %x\n", item->c.flags, item->s.flags, TH_FIN, TH_RST);
 				free_nat_port(item->s.th_dport);
@@ -573,6 +579,7 @@ static int nat_get_mode(const nat_iphdr_t *ip, const nat_tcphdr_t *th, nat_connt
 	}
 
 	if (ip->ip_dst.s_addr == NAT_C_ADDR) {
+		*ops = &fast_conntrack_ops;
 		return NAT_MODE_NOT_SUPPORT;
 	}
 
@@ -675,6 +682,195 @@ static int socks5_cmd(void *buf, nat_iphdr_t *ip, nat_tcphdr_t *tcp)
 	return cmdp - (char *)buf;
 }
 
+static int handle_server_to_client(nat_conntrack_t *conn, nat_conntrack_ops *ops, nat_tcphdr_t *th, uint8_t *packet, size_t len)
+{
+	nat_tcphdr_t h1;
+	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
+
+	int data_acked;
+	int datalen, seq_flag;
+	uint16_t old_len_flag, new_len_flag;
+	int state = tcp_state(th->th_flags);
+
+	switch (state) {
+		case TCPS_SYN_RECVD:
+			/* nat: server -> client, dec seq=seq + 12, clear SYN */
+			h1.th_seq  = ntohl(th->th_seq);
+			conn->s.snd_max = h1.th_seq +1;
+			conn->s.seq_meta = h1.th_seq +13;
+			conn->last_meta  = time(NULL);
+			conn->s.flags   |= NEED_ACK_ADJUST;
+
+			th->th_seq = htonl(h1.th_seq + 12);
+			th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
+
+			old_len_flag = *(uint16_t *) m_off(th, 12);
+			th->th_flags &= ~TH_ACK;
+			new_len_flag = *(uint16_t *) m_off(th, 12);
+			th->th_sum = update_cksum(th->th_sum, old_len_flag - new_len_flag);
+			break;
+
+		case TCPS_ESTABLISHED:
+			/* nat: server -> client */
+			h1.th_seq  = ntohl(th->th_seq);
+			h1.th_ack  = ntohl(th->th_ack);
+			datalen = d_off(m_off(packet, len), th) - (th->th_off << 2);
+
+			if (SEQ_LT(conn->s.rcv_nxt, h1.th_ack)) {
+				conn->s.rcv_nxt = h1.th_ack;
+			}
+
+			h1.th_flags = th->th_flags;
+			seq_flag = (CHECK_FLAGS(h1.th_flags, TH_SYN) > 0) + (CHECK_FLAGS(h1.th_flags, TH_FIN) > 0);
+			if (SEQ_LT(conn->s.snd_max, h1.th_seq + datalen + seq_flag)) {
+				conn->s.snd_max = h1.th_seq + datalen + seq_flag;
+				if (SEQ_LT(conn->s.seq_meta, conn->s.snd_max)) {
+					conn->s.flags &= ~NEED_ACK_ADJUST;
+				}
+			}
+
+			if (((conn->c.flags & NEED_ACK_ADJUST) ||
+						(conn->last_meta + 120 > time(NULL))) &&
+					SEQ_LT(h1.th_seq, conn->c.rcv_nxt) &&
+					SEQ_LT(h1.th_seq, conn->s.seq_meta) &&
+					SEQ_GEQ(h1.th_seq, conn->s.seq_meta - 12)) {
+				conn->last_meta = time(NULL);
+				if (SEQ_LT(conn->c.rcv_nxt, h1.th_seq + datalen)) {
+					int off = (th->th_off << 2);
+					int adj = (int)(conn->c.rcv_nxt - h1.th_seq);
+					th->th_seq = htonl(conn->c.rcv_nxt);
+					th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
+
+					uint8_t *mem = m_off(th, off);
+					th->th_sum = update_cksum(th->th_sum, -cksum_delta(mem, adj));
+					th->th_sum = update_cksum(th->th_sum, htons(adj));
+					memmove(mem, mem + adj, datalen - adj);
+					len -= adj;
+
+					(*ops->adjust)(packet, -adj);
+					assert(1 & ~adj);
+				} else if (datalen > 0 || SEQ_GEQ(h1.th_ack, conn->c.seq_meta)) {
+					th->th_seq = htonl(conn->c.rcv_nxt -(datalen > 0 && CHECK_FLAGS(th->th_flags, TH_ACK| TH_FIN) == TH_ACK));
+					th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
+
+					th->th_sum = update_cksum(th->th_sum, -cksum_delta(m_off(packet, len - datalen), datalen));
+					th->th_sum = update_cksum(th->th_sum, htons(datalen));
+					len -= datalen;
+
+					(*ops->adjust)(packet, -datalen);
+				} else {
+					log_verbose("just ignore\n");
+					return 0;
+				}
+			}
+
+			break;
+
+		case TCPS_CLOSED:
+			h1.th_ack  = ntohl(th->th_ack);
+			if (SEQ_GEQ(conn->c.snd_max, h1.th_ack) &&
+					SEQ_LT(conn->c.snd_max, h1.th_ack + inject_len)) {
+				th->th_ack = htonl(h1.th_ack + inject_len);
+				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
+			}
+			break;
+
+		default:
+			break;
+
+	}
+
+	return len;
+}
+
+static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops, nat_tcphdr_t *th, uint8_t *packet, size_t len)
+{
+	nat_tcphdr_t h1;
+	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
+
+	uint16_t tlen;
+	int sublen, datalen, seq_flag;
+	uint16_t old_len_flag, new_len_flag;
+	int state = tcp_state(th->th_flags);
+
+	switch (state) {
+		case TCPS_SYN_SENT:
+			/* nat: client -> server, dec seq=seq - inject length */
+			h1.th_seq  = ntohl(th->th_seq);
+			conn->c.snd_max = h1.th_seq;
+			conn->c.seq_meta = h1.th_seq +1;
+			conn->c.flags   |= NEED_ACK_ADJUST;
+
+			sublen = socks5_cmd(m_off(packet, len), ip, th);
+			th->th_seq = htonl(h1.th_seq - sublen);
+			th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
+			break;
+
+		case TCPS_SYN_RECVD:
+			/* nat: client -> server, dec seq=seq - 13, clear SYN */
+			h1.th_seq  = ntohl(th->th_seq);
+			h1.th_ack  = ntohl(th->th_ack);
+			conn->c.rcv_nxt = h1.th_ack;
+
+			sublen = socks5_cmd(m_off(packet, len), ip, th);
+			th->th_ack = htonl(h1.th_ack - 12);
+			th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
+			th->th_seq = htonl(h1.th_seq - sublen + 1);
+			th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
+			th->th_sum = update_cksum(th->th_sum, cksum_delta(m_off(packet, len), sublen));
+			th->th_sum = update_cksum(th->th_sum, -htons(sublen));
+			len += sublen;
+
+			old_len_flag = *(uint16_t *) m_off(th, 12);
+			th->th_flags &= ~TH_SYN;
+			new_len_flag = *(uint16_t *) m_off(th, 12);
+			th->th_sum = update_cksum(th->th_sum, old_len_flag - new_len_flag);
+
+			(*ops->adjust)(packet, sublen);
+			break;
+
+		case TCPS_ESTABLISHED:
+			/* nat: client -> server */
+			h1.th_ack  = ntohl(th->th_ack);
+			h1.th_seq  = ntohl(th->th_seq);
+			datalen = d_off(m_off(packet, len), th) - (th->th_off << 2);
+
+			if (SEQ_LT(conn->c.rcv_nxt, h1.th_ack)) {
+				conn->c.rcv_nxt = h1.th_ack;
+				if (SEQ_LT(conn->c.seq_meta, conn->c.rcv_nxt)) {
+					conn->c.flags &= ~NEED_ACK_ADJUST;
+				}
+			}
+
+			h1.th_flags = th->th_flags;
+			seq_flag = (CHECK_FLAGS(h1.th_flags, TH_SYN) > 0) + (CHECK_FLAGS(h1.th_flags, TH_FIN) > 0);
+			if (SEQ_LT(conn->c.snd_max, h1.th_seq + datalen + seq_flag)) {
+				conn->c.snd_max = h1.th_seq + datalen + seq_flag;
+			}
+
+			if ((conn->s.flags & NEED_ACK_ADJUST) &&
+					SEQ_GEQ(h1.th_ack, conn->s.seq_meta)) {
+				th->th_ack = htonl(conn->s.snd_max);
+				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
+				log_verbose("from client snd_max %x th_ack %x\n", conn->s.snd_max, h1.th_ack);
+			}
+			break;
+
+		case TCPS_CLOSED:
+			break;
+
+		default:
+			break;
+	}
+
+	return len;
+}
+
+#if defined(ENABLE_OUTLINE_META)
+#define handle_client_to_server(a, b, c, d, l) (l)
+#define handle_server_to_client(a, b, c, d, l) (l)
+#endif
+
 ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 {
 	int nat_mode;
@@ -732,175 +928,11 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 	}
 
 	if (nat_mode == NAT_MODE_CLIENT_TO_SERVER) {
-		uint16_t tlen;
-		int sublen, datalen, seq_flag;
-		uint16_t old_len_flag, new_len_flag;
-		int state = tcp_state(th->th_flags);
-
 		tcpcb = &conn->s;
-		switch (state) {
-			case TCPS_SYN_SENT:
-				/* nat: client -> server, dec seq=seq - inject length */
-				h1.th_seq  = ntohl(th->th_seq);
-				conn->c.snd_max = h1.th_seq;
-				conn->c.seq_meta = h1.th_seq +1;
-				conn->c.flags   |= NEED_ACK_ADJUST;
-
-				sublen = socks5_cmd(m_off(packet, len), ip, th);
-				th->th_seq = htonl(h1.th_seq - sublen);
-				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
-				break;
-
-			case TCPS_SYN_RECVD:
-				/* nat: client -> server, dec seq=seq - 13, clear SYN */
-				h1.th_seq  = ntohl(th->th_seq);
-				h1.th_ack  = ntohl(th->th_ack);
-				conn->c.rcv_nxt = h1.th_ack;
-
-				sublen = socks5_cmd(m_off(packet, len), ip, th);
-				th->th_ack = htonl(h1.th_ack - 12);
-				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
-				th->th_seq = htonl(h1.th_seq - sublen + 1);
-				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
-				th->th_sum = update_cksum(th->th_sum, cksum_delta(m_off(packet, len), sublen));
-				th->th_sum = update_cksum(th->th_sum, -htons(sublen));
-				len += sublen;
-
-				old_len_flag = *(uint16_t *) m_off(th, 12);
-				th->th_flags &= ~TH_SYN;
-				new_len_flag = *(uint16_t *) m_off(th, 12);
-				th->th_sum = update_cksum(th->th_sum, old_len_flag - new_len_flag);
-
-				(*ops->adjust)(packet, sublen);
-				break;
-
-			case TCPS_ESTABLISHED:
-				/* nat: client -> server */
-				h1.th_ack  = ntohl(th->th_ack);
-				h1.th_seq  = ntohl(th->th_seq);
-				datalen = d_off(m_off(packet, len), th) - (th->th_off << 2);
-
-				if (SEQ_LT(conn->c.rcv_nxt, h1.th_ack)) {
-					conn->c.rcv_nxt = h1.th_ack;
-					if (SEQ_LT(conn->c.seq_meta, conn->c.rcv_nxt)) {
-						conn->c.flags &= ~NEED_ACK_ADJUST;
-					}
-				}
-
-				h1.th_flags = th->th_flags;
-				seq_flag = (CHECK_FLAGS(h1.th_flags, TH_SYN) > 0) + (CHECK_FLAGS(h1.th_flags, TH_FIN) > 0);
-				if (SEQ_LT(conn->c.snd_max, h1.th_seq + datalen + seq_flag)) {
-					conn->c.snd_max = h1.th_seq + datalen + seq_flag;
-				}
-
-				if ((conn->s.flags & NEED_ACK_ADJUST) &&
-						SEQ_GEQ(h1.th_ack, conn->s.seq_meta)) {
-					th->th_ack = htonl(conn->s.snd_max);
-					th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
-					log_verbose("from client snd_max %x th_ack %x\n", conn->s.snd_max, h1.th_ack);
-				}
-				break;
-
-			case TCPS_CLOSED:
-				break;
-
-			default:
-				break;
-		}
+		len = handle_client_to_server(conn, ops, th, packet, len);
 	} else if (nat_mode == NAT_MODE_SERVER_TO_CLIENT) {
-		int data_acked;
-		int datalen, seq_flag;
-		uint16_t old_len_flag, new_len_flag;
-		int state = tcp_state(th->th_flags);
-
 		tcpcb = &conn->c;
-		switch (state) {
-			case TCPS_SYN_RECVD:
-				/* nat: server -> client, dec seq=seq + 12, clear SYN */
-				h1.th_seq  = ntohl(th->th_seq);
-				conn->s.snd_max = h1.th_seq +1;
-				conn->s.seq_meta = h1.th_seq +13;
-				conn->last_meta  = time(NULL);
-				conn->s.flags   |= NEED_ACK_ADJUST;
-
-				th->th_seq = htonl(h1.th_seq + 12);
-				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
-
-				old_len_flag = *(uint16_t *) m_off(th, 12);
-				th->th_flags &= ~TH_ACK;
-				new_len_flag = *(uint16_t *) m_off(th, 12);
-				th->th_sum = update_cksum(th->th_sum, old_len_flag - new_len_flag);
-				break;
-
-			case TCPS_ESTABLISHED:
-				/* nat: server -> client */
-				h1.th_seq  = ntohl(th->th_seq);
-				h1.th_ack  = ntohl(th->th_ack);
-				datalen = d_off(m_off(packet, len), th) - (th->th_off << 2);
-
-				if (SEQ_LT(conn->s.rcv_nxt, h1.th_ack)) {
-					conn->s.rcv_nxt = h1.th_ack;
-				}
-
-				h1.th_flags = th->th_flags;
-				seq_flag = (CHECK_FLAGS(h1.th_flags, TH_SYN) > 0) + (CHECK_FLAGS(h1.th_flags, TH_FIN) > 0);
-				if (SEQ_LT(conn->s.snd_max, h1.th_seq + datalen + seq_flag)) {
-					conn->s.snd_max = h1.th_seq + datalen + seq_flag;
-					if (SEQ_LT(conn->s.seq_meta, conn->s.snd_max)) {
-						conn->s.flags &= ~NEED_ACK_ADJUST;
-					}
-				}
-
-				if (((conn->c.flags & NEED_ACK_ADJUST) ||
-							(conn->last_meta + 120 > time(NULL))) &&
-							SEQ_LT(h1.th_seq, conn->c.rcv_nxt) &&
-							SEQ_LT(h1.th_seq, conn->s.seq_meta) &&
-							SEQ_GEQ(h1.th_seq, conn->s.seq_meta - 12)) {
-					conn->last_meta = time(NULL);
-					if (SEQ_LT(conn->c.rcv_nxt, h1.th_seq + datalen)) {
-						int off = (th->th_off << 2);
-						int adj = (int)(conn->c.rcv_nxt - h1.th_seq);
-						th->th_seq = htonl(conn->c.rcv_nxt);
-						th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
-
-						uint8_t *mem = m_off(th, off);
-						th->th_sum = update_cksum(th->th_sum, -cksum_delta(mem, adj));
-						th->th_sum = update_cksum(th->th_sum, htons(adj));
-						memmove(mem, mem + adj, datalen - adj);
-						len -= adj;
-
-						(*ops->adjust)(packet, -adj);
-						assert(1 & ~adj);
-					} else if (datalen > 0 || SEQ_GEQ(h1.th_ack, conn->c.seq_meta)) {
-						th->th_seq = htonl(conn->c.rcv_nxt -(datalen > 0 && CHECK_FLAGS(th->th_flags, TH_ACK| TH_FIN) == TH_ACK));
-						th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
-
-						th->th_sum = update_cksum(th->th_sum, -cksum_delta(m_off(packet, len - datalen), datalen));
-						th->th_sum = update_cksum(th->th_sum, htons(datalen));
-						len -= datalen;
-
-						(*ops->adjust)(packet, -datalen);
-					} else {
-						log_verbose("just ignore\n");
-						return 0;
-					}
-				}
-
-				break;
-
-			case TCPS_CLOSED:
-				h1.th_ack  = ntohl(th->th_ack);
-				if (SEQ_GEQ(conn->c.snd_max, h1.th_ack) &&
-						SEQ_LT(conn->c.snd_max, h1.th_ack + inject_len)) {
-					th->th_ack = htonl(h1.th_ack + inject_len);
-					th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
-				}
-				break;
-
-			default:
-				break;
-			
-		}
+		len = handle_server_to_client(conn, ops, th, packet, len);
 	} else if (nat_mode == NAT_MODE_STATELESS_FAST) {
 		/* state less, fast nat process */
 		tcpcb = &conn->c;
