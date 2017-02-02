@@ -629,6 +629,11 @@ ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 	int flags = th->th_flags;
 	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 
+	if (flags & TH_RST) {
+		log_error("drop RST packet\n");
+		return 0;
+	}
+
 	if (flags & TH_ACK) {
 		th->th_flags = TH_RST;
 		th->th_seq = th->th_ack;

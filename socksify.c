@@ -128,6 +128,7 @@ int main(int argc, char *argv[])
 
 	system("ifconfig utun0 10.2.0.2/24 10.2.0.15 up");
 	system("route add -net 119.75.217.0/24 10.2.0.15");
+	system("route add -net 31.193.132.0/24 10.2.0.15");
 
 	for (; ; ) {
 		char *packet = (buf + 60);
