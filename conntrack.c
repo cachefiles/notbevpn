@@ -153,33 +153,70 @@ static uint16_t use_nat_port(uint16_t port)
 	assert(old != _nat_port_bitmap[index]);
 	_nat_count++;
 
-	return htons(port);
+	return htons(port + 1024);
 }
+
+#define USER_PORT_COUNT (65536 - 1024)
 
 static uint16_t alloc_nat_port()
 {
-	int index, offset;
+	uint32_t bitmap;
+	int index, offset, bound;
 
-	if (_nat_count + 1024 >= 65536) {
+	if (_nat_count >= USER_PORT_COUNT) {
 		return 0;
 	}
 
-	do {
-		if (_nat_port < 1024) {
-			_nat_port = 1024;
-			continue;
+	_nat_port += (rand() % 17);
+	_nat_port %= USER_PORT_COUNT;
+
+	bound = (_nat_port >> 5);
+	bitmap = _nat_port_bitmap[bound];
+
+	for (offset = (_nat_port % 32); offset < 32; offset++) {
+		if (bitmap & (1 << offset)) {
+			_nat_port++;
+		} else {
+			return _nat_port;
 		}
+	} 
 
-		_nat_port += (rand() % 17);
-
-		index = (_nat_port / 32);
-		if (_nat_port_bitmap[index] == 0xffffffff) {
-			_nat_port = (index * 32);
-			continue;
+	for (index = bound + 1; index < (USER_PORT_COUNT / 32); index++) {
+		if (_nat_port_bitmap[index] != 0xffffffff) {
+			bitmap = _nat_port_bitmap[index];
+			offset = 0;
+			goto found;
 		}
+	}
 
-		offset = (_nat_port % 32);
-	} while (_nat_port_bitmap[index] & (1 << offset));
+	for (index = 0; index < bound; index++) {
+		if (_nat_port_bitmap[index] != 0xffffffff) {
+			bitmap = _nat_port_bitmap[index];
+			offset = 0;
+			goto found;
+		}
+	}
+
+	_nat_port = bound * 32;
+	for (offset = 0; offset < (_nat_port % 32); offset++) {
+		if (bitmap & (1 << offset)) {
+			_nat_port++;
+		} else {
+			return _nat_port;
+		}
+	}
+
+	return 0;
+
+found:
+	_nat_port = index * 32;
+	for (offset = 0; offset < 32; offset++) {
+		if (bitmap & (1 << offset)) {
+			_nat_port++;
+		} else {
+			return _nat_port;
+		}
+	}
 
 	return _nat_port;
 }
@@ -188,7 +225,7 @@ static uint16_t free_nat_port(uint16_t port)
 {
 	int index, offset;
 
-	port = htons(port);
+	port = htons(port) - 1024;
 	index = (port / 32);
 	offset = (port % 32);
 
