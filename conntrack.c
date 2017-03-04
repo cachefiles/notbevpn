@@ -124,19 +124,19 @@ static uint16_t update_cksum(uint16_t old, int delta)
 {
 	int acc;
 
-    acc = delta;
-    acc += old;
+	acc = delta;
+	acc += old;
 
-    if (acc < 0) {
-        acc  = -acc;
-        acc  = (acc >> 16) + (acc & 0xffff);
-        acc += (acc >> 16);
+	if (acc < 0) {
+		acc  = -acc;
+		acc  = (acc >> 16) + (acc & 0xffff);
+		acc += (acc >> 16);
 		return ~acc;
-    } else {
-        acc  = (acc >> 16) + (acc & 0xffff);
-        acc += (acc >> 16);
+	} else {
+		acc  = (acc >> 16) + (acc & 0xffff);
+		acc += (acc >> 16);
 		return acc;
-    }
+	}
 }
 
 static int _nat_count = 0;
@@ -179,7 +179,7 @@ static uint16_t alloc_nat_port()
 		} else {
 			return _nat_port;
 		}
-	} 
+	}
 
 	for (index = bound + 1; index < (USER_PORT_COUNT / 32); index++) {
 		if (_nat_port_bitmap[index] != 0xffffffff) {
@@ -523,7 +523,7 @@ static nat_conntrack_t * lookup_nat(uint8_t *packet, uint16_t sport, uint16_t dp
 			return item;
 		}
 	}
-	
+
 	return NULL;
 }
 
@@ -558,7 +558,7 @@ static nat_conntrack_t * lookup_fast(uint8_t *packet, uint16_t sport, uint16_t d
 {
 	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 	static nat_conntrack_t st;
-	
+
 	if (sport == NAT_SSL_PORT) {
 		st.c.th_dport = SSL_PORT;
 		st.c.th_sport = dport;
@@ -780,6 +780,12 @@ static int handle_server_to_client(nat_conntrack_t *conn, nat_conntrack_ops *ops
 				if (SEQ_LT(conn->c.rcv_nxt, h1.th_seq + datalen)) {
 					int off = (th->th_off << 2);
 					int adj = (int)(conn->c.rcv_nxt - h1.th_seq);
+
+					if (th->th_flags & TH_FIN) {
+						conn->c.flags |= TH_RST;
+						return tcp_frag_rst(th, packet);
+					}
+
 					th->th_seq = htonl(conn->c.rcv_nxt);
 					th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_seq), th->th_seq));
 
@@ -801,6 +807,10 @@ static int handle_server_to_client(nat_conntrack_t *conn, nat_conntrack_ops *ops
 
 					(*ops->adjust)(packet, -datalen);
 				} else {
+					if (th->th_flags & TH_FIN) {
+						conn->c.flags |= TH_RST;
+						return tcp_frag_rst(th, packet);
+					}
 					log_verbose("just ignore\n");
 					return 0;
 				}
@@ -812,8 +822,13 @@ static int handle_server_to_client(nat_conntrack_t *conn, nat_conntrack_ops *ops
 			h1.th_ack  = ntohl(th->th_ack);
 			if (SEQ_GEQ(conn->c.snd_max, h1.th_ack) &&
 					SEQ_LT(conn->c.snd_max, h1.th_ack + inject_len)) {
+#if 0
 				th->th_ack = htonl(h1.th_ack + inject_len);
 				th->th_sum = update_cksum(th->th_sum, cksum_long_delta(htonl(h1.th_ack), th->th_ack));
+#else
+				conn->c.flags |= TH_RST;
+				return tcp_frag_rst(th, packet);
+#endif
 			}
 			break;
 
@@ -899,6 +914,11 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 			break;
 
 		case TCPS_CLOSED:
+			if ((conn->s.flags & NEED_ACK_ADJUST) &&
+					SEQ_GEQ(h1.th_ack, conn->s.seq_meta)) {
+				conn->s.flags |= TH_FLAGS;
+				return tcp_frag_rst(th, packet);
+			}
 			break;
 
 		default:
