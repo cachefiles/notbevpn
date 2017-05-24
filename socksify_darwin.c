@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
 
 	for (; ; ) {
 		char *packet = (buf + 60);
-		len = utun_read(tun, packet, 1500);
+		len = tun_read(tun, packet, 1500);
 		if (len < 0) {
 			fprintf(stderr, "read tun failure\n");
 			break;
@@ -144,7 +144,7 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
-		len = utun_write(tun, packet, len);
+		len = tun_write(tun, packet, len);
 		if (len <= 0) {
 			fprintf(stderr, "write tun failure: %d\n", errno);
 			continue;
