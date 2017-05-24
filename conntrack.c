@@ -867,7 +867,7 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 		case TCPS_SYN_SENT:
 			/* nat: client -> server, dec seq=seq - inject length */
 			h1.th_seq  = ntohl(th->th_seq);
-			conn->c.snd_max = h1.th_seq;
+			conn->c.snd_max = h1.th_seq +1;
 			conn->c.seq_meta = h1.th_seq +1;
 			conn->c.flags   |= NEED_ACK_ADJUST;
 
