@@ -1,7 +1,10 @@
-CFLAGS += -g
-CFLAGS += -I$(shell pwd)
+THIS_PATH := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-BIN_FMT_TARGET := $(shell ./getos.sh CC=$(CC))
+CFLAGS += -g
+CFLAGS += -I$(THIS_PATH)
+VPATH  := $(THIS_PATH)
+
+BIN_FMT_TARGET := $(shell $(THIS_PATH)/getos.sh CC=$(CC))
 
 socksify: conntrack.o socksify.o
 	$(CC) -o $@ $(LDFLAGS) $^ $(LDLIBS)
