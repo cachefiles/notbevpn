@@ -54,15 +54,18 @@ int main(int argc, char *argv[])
 {
 	char buf[2048];
 	int tun, len;
+	const char *tun_name = argc > 1? argv[1]: "utun0";
 
-	tun = vpn_tun_alloc(argc > 1? argv[1]: "utun0");
+	tun = vpn_tun_alloc(tun_name);
 	if (tun == -1) {
 		return -1;
 	}
 
 	module_init();
 
-	system("ifconfig utun0 10.2.0.2/24 10.2.0.15 up");
+	snprintf(buf, sizeof(buf), "ifconfig %s 10.2.0.2/24 10.2.0.15 up", tun_name);
+	system(buf);
+
 	system("route add -net 119.75.217.0/24 10.2.0.15");
 	system("route add -net 31.193.132.0/24 10.2.0.15");
 
