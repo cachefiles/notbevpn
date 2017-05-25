@@ -532,8 +532,52 @@ ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 	return d_off(th +1, packet);
 }
 
+ssize_t tcpup_frag_rst(struct tcpuphdr *th, uint8_t *packet)
+{
+	int flags = th->th_flags;
+
+	if (flags & TH_RST) {
+		log_error("drop RST packet\n");
+		return 0;
+	}
+
+	if (flags & TH_ACK) {
+		th->th_flags = TH_RST;
+		th->th_seq = th->th_ack;
+		th->th_ack = 0;
+	} else {
+		th->th_flags = (TH_RST| TH_ACK);
+		th->th_ack = htonl(ntohl(th->th_seq) + 1);
+		th->th_seq = 0;
+	}
+
+	th->th_opten = 0;
+	th->th_win = 0;
+
+	return sizeof(*th);
+}
+
 static char _pkt_buf[1500];
-static size_t _pkt_len = 0;
+static size_t _tcpup_len = 0;
+
+static char _tcp_buf[1500];
+static size_t _tcpip_len = 0;
+
+void * get_tcpup_data(int *len)
+{
+	if (_tcpup_len == 0) return NULL;
+	if (len) *len = _tcpup_len;
+	_tcpup_len = 0;
+	return _pkt_buf;
+}
+
+void * get_tcpip_data(int *len)
+{
+	if (_tcpip_len == 0) return NULL;
+	if (len) *len = _tcpip_len;
+	_tcpip_len = 0;
+	return _tcp_buf;
+}
 
 static u_char _null_[28] = {0};
 static u_char type_len_map[8] = {0x0, 0x04, 0x0, 0x0, 0x10};
@@ -601,15 +645,171 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	data_start = ((uint8_t *)th) + (th->th_off << 2);
 	count = ((packet + len) - data_start);
 
-	memcpy(((u_char *)(th + 1)) + offset, data_start, count);
-	_pkt_len = sizeof(*up) + offset + count;
+	memcpy(((u_char *)(up + 1)) + offset, data_start, count);
+	_tcpup_len = sizeof(*up) + offset + count;
 
 	up->th_conv = conn->s.th_dport;
 
 	return 0;
 }
 
-ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
+unsigned tcpip_checksum(unsigned cksum,  const void *buf, size_t len, int finish)
+{
+	unsigned short *digit = (unsigned short *)buf;
+
+	while (len > 1) {
+		cksum += (*digit++);
+		len -= 2;
+	}
+
+	if (len > 0 && finish) {
+		unsigned short t0 = ntohs(*digit) & ~0xff;
+		cksum += htons(t0);
+	}
+
+	return cksum;
+}
+
+int ip_checksum(void *buf, size_t len)
+{
+    unsigned short *digit;
+    unsigned long cksum = 0;
+    unsigned short cksum1 = 0;
+
+    digit = (unsigned short *)buf;
+    while (len > 1) {
+        cksum += (*digit++);
+        len -= 2;
+    }
+
+    if (len > 0) {
+        cksum += *(unsigned char *)digit;
+    }
+
+    cksum1 = (cksum >> 16);
+    while (cksum1 > 0) {
+        cksum  = cksum1 + (cksum & 0xffff);
+        cksum1 = (cksum >> 16);
+    }
+
+    cksum1 = (~cksum);
+    return cksum1;
+}
+
+static int init_ipv4_tpl(nat_iphdr_t *ip, size_t len)
+{
+	ip->ip_hl = 5;
+	ip->ip_v  = 4;
+	ip->ip_tos = 0;
+	ip->ip_id  = 0;
+	ip->ip_off = htons(IP_DF);
+	ip->ip_ttl = 64;
+	ip->ip_p   = IPPROTO_TCP;
+
+	ip->ip_dst.s_addr = 0;
+	ip->ip_src.s_addr = 0;
+
+	ip->ip_sum = 0;
+	ip->ip_len = htons(len + sizeof(*ip));
+
+	return 0;
+}
+
+int tcp_checksum(unsigned cksum, void *buf, size_t len)
+{
+    unsigned short cksum1 = 0;
+    cksum += htons(6 + len);
+    cksum = tcpip_checksum(cksum, buf, len, 1);
+
+    cksum1 = (cksum >> 16);
+    while (cksum1 > 0) {
+        cksum  = cksum1 + (cksum & 0xffff);
+        cksum1 = (cksum >> 16);
+    }
+
+    return (~cksum);
+}
+
+static int handle_server_to_client(nat_conntrack_t *conn,
+		nat_conntrack_ops *ops, struct tcpuphdr *up, uint8_t *packet, size_t len)
+{
+	const uint8_t *data_start = NULL;
+	nat_iphdr_t *ip = (nat_iphdr_t *)_tcp_buf;
+
+	int count, offset;
+	struct tcpupopt to = {0};
+	nat_tcphdr_t *th = (nat_tcphdr_t *)(ip + 1);
+	memset(th, 0, sizeof(*th));
+
+	th->th_seq = up->th_seq;
+	th->th_ack = up->th_ack;
+
+	th->th_win   = up->th_win;
+	th->th_flags = up->th_flags;
+
+	th->th_sport = conn->c.th_dport;
+	th->th_dport = conn->c.th_sport;
+	th->th_urp   = 0;
+	th->th_sum   = 0;
+
+	count = (up->th_opten << 2);
+	offset = tcpup_dooptions(&to, (u_char *)(up + 1), count);
+
+	if (th->th_flags & TH_SYN) {
+		to.to_flags |= TOF_SACKPERM;
+		to.to_flags |= TOF_SCALE;
+		to.to_wscale = 7;
+	}
+
+	offset = tcpip_addoptions(&to, (u_char *)(th + 1));
+	th->th_off = ((offset + sizeof(*th)) >> 2);
+
+	data_start = ((uint8_t *)(up + 1)) + (up->th_opten << 2);
+	count = ((packet + len) - data_start);
+	memcpy(((u_char *)(th + 1)) + offset, data_start, count);
+
+	init_ipv4_tpl(ip, count + sizeof(*th) + offset);
+	ip->ip_dst = conn->c.ip_src;
+	ip->ip_src = conn->c.ip_dst;
+	ip->ip_sum = ip_checksum(ip, sizeof(*ip));
+
+	unsigned cksum = 0;
+	cksum = tcpip_checksum(cksum, &ip->ip_dst, 4, 0);
+	cksum = tcpip_checksum(cksum, &ip->ip_src, 4, 0);
+	th->th_sum = tcp_checksum(cksum, th, sizeof(*th) + offset + count);
+
+	_tcpip_len = sizeof(*th) + sizeof(*ip) + offset + count;
+	return 0;
+}
+
+ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
+{
+	struct tcpuphdr *up;
+	nat_conntrack_ops *ops;
+	nat_conntrack_t *item, *conn = NULL;
+
+	up = (struct tcpuphdr *)packet;
+	LIST_FOREACH(item, &_ipv4_header, entry) {
+		if (item->s.th_dport != up->th_conv) {
+			continue;
+		}
+
+		item->last_alive = time(NULL);
+		conn = item;
+	}
+
+	if (conn == NULL) {
+		return tcpup_frag_rst(up, packet);
+	}
+
+	ops = (nat_conntrack_ops *)&ip_conntrack_ops;
+	handle_server_to_client(conn, ops, up, packet, len);
+	conn->s.flags |= up->th_flags;
+
+	return 0;
+}
+
+ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 {
 	nat_iphdr_t *ip;
 	tcp_state_t *tcpcb;
@@ -665,7 +865,6 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 	handle_client_to_server(conn, ops, th, packet, len);
 	conn->c.flags |= th->th_flags;
 
-	log_verbose("_pkt_len: %ld\n", _pkt_len);
 	return 0;
 }
 

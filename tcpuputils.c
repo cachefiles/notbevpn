@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
@@ -174,7 +175,6 @@ int tcpip_addoptions(struct tcpupopt *to, u_char *optp)
 					break;
 				}
 			case TOF_TS:
-
 				while (!optlen || optlen % 4 != 2) {
 					optlen += TCPOLEN_NOP;
 					*optp++ = TCPOPT_NOP;
@@ -273,7 +273,7 @@ int tcpup_dooptions(struct tcpupopt *to, u_char *cp, int cnt)
 				to->to_flags |= TOF_TS;
 				memcpy(&to->to_tsval, cp + 2, sizeof(to->to_tsval));
 				to->to_tsval = ntohl(to->to_tsval);
-				memcpy(&to->to_tsecr, cp + 2, sizeof(to->to_tsecr));
+				memcpy(&to->to_tsecr, cp + 6, sizeof(to->to_tsecr));
 				to->to_tsecr = ntohl(to->to_tsecr);
 				break;
 #if 0
@@ -376,6 +376,22 @@ int tcpup_addoptions(struct tcpupopt *to, u_char *optp)
 					break;
 				}
 			case TOF_TS:
+				while (!optlen || optlen % 4 != 2) {
+					optlen += TCPOLEN_NOP;
+					*optp++ = TCPOPT_NOP;
+				}
+				if (TCPUP_MAXOLEN - optlen < TCPOLEN_TIMESTAMP)
+					continue;
+				optlen += TCPOLEN_TIMESTAMP;
+				*optp++ = TCPOPT_TIMESTAMP;
+				*optp++ = TCPOLEN_TIMESTAMP;
+				to->to_tsval = htonl(to->to_tsval);
+				to->to_tsecr = htonl(to->to_tsecr);
+				memcpy(optp, &to->to_tsval, sizeof(to->to_tsval));
+				optp += sizeof(to->to_tsval);
+				memcpy(optp, &to->to_tsecr, sizeof(to->to_tsecr));
+				optp += sizeof(to->to_tsecr);
+				break;
 			case TOF_SACKPERM:
 				break;
 			case TOF_DESTINATION:
