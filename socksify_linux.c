@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
 
 	module_init();
 
-	snprintf(buf, sizeof(buf), "ifconfig %s 10.2.0.2/24 10.2.0.15 up", tun_name);
+	snprintf(buf, sizeof(buf), "ifconfig %s 10.2.0.2/24 up", tun_name);
 	system(buf);
 
 	system("route add -net 119.75.217.0/24 10.2.0.15");
