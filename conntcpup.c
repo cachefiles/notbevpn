@@ -330,6 +330,27 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 	return NULL;
 }
 
+static int establish_timeout(int live_count)
+{
+	if (live_count < 16) {
+		return 72000;
+	}
+
+	if (live_count < 128) {
+		return 3600;
+	}
+
+	if (live_count < 1024) {
+		return 1800;
+	}
+
+	if (live_count < 10240) {
+		return 600;
+	}
+
+	return 120;
+}
+
 static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t dport)
 {
 	time_t now;
@@ -374,7 +395,7 @@ free_conn:
 			int mflags = (TH_SYN| TH_FIN);
 			int s_established = (sflags & mflags) == TH_SYN;
 			int c_established = (cflags & mflags) == TH_SYN;
-			int timeout = (s_established && c_established)? 60: 1800;
+			int timeout = (s_established && c_established)? establish_timeout(_nat_count): 60;
 
 			if ((item->last_alive > now) ||
 					((cflags| sflags) & TH_RST) ||

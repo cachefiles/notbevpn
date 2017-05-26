@@ -238,7 +238,6 @@ int main(int argc, char *argv[])
 	system("ifconfig utun0 10.2.0.2/24 10.2.0.15 up");
 	system("route add -net 119.75.217.0/24 10.2.0.15");
 	system("route add -net 1.0.0.0/24 10.2.0.15");
-	system("route add -net 172.217.0.0/16 10.2.0.15");
 
 	devfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 
@@ -248,7 +247,7 @@ int main(int argc, char *argv[])
 	assert(error == 0);
 
 	so_addr.sin_addr.s_addr = inet_addr("114.215.99.157");
-	so_addr.sin_addr.s_addr = inet_addr("69.85.87.217");
+	so_addr.sin_addr.s_addr = inet_addr("62.210.116.63");
 
 	for (; ; ) {
 		int nready;
