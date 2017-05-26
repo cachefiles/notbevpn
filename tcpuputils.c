@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
 
 #ifdef __linux__
 #define __BSD_VISIBLE 1
