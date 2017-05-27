@@ -435,3 +435,76 @@ int tcpup_addoptions(struct tcpupopt *to, u_char *optp)
 	return (optlen);
 }
 
+unsigned tcpip_checksum(unsigned cksum,  const void *buf, size_t len, int finish)
+{
+	unsigned short *digit = (unsigned short *)buf;
+
+	while (len > 1) {
+		cksum += (*digit++);
+		len -= 2;
+	}
+
+	if (len > 0 && finish) {
+		unsigned short t0 = ntohs(*digit) & ~0xff;
+		cksum += htons(t0);
+	}
+
+	return cksum;
+}
+
+int ip_checksum(void *buf, size_t len)
+{
+    unsigned short *digit;
+    unsigned long cksum = 0;
+    unsigned short cksum1 = 0;
+
+    digit = (unsigned short *)buf;
+    while (len > 1) {
+        cksum += (*digit++);
+        len -= 2;
+    }
+
+    if (len > 0) {
+        cksum += *(unsigned char *)digit;
+    }
+
+    cksum1 = (cksum >> 16);
+    while (cksum1 > 0) {
+        cksum  = cksum1 + (cksum & 0xffff);
+        cksum1 = (cksum >> 16);
+    }
+
+    cksum1 = (~cksum);
+    return cksum1;
+}
+
+int tcp_checksum(unsigned cksum, void *buf, size_t len)
+{
+    unsigned short cksum1 = 0;
+    cksum += htons(6 + len);
+    cksum = tcpip_checksum(cksum, buf, len, 1);
+
+    cksum1 = (cksum >> 16);
+    while (cksum1 > 0) {
+        cksum  = cksum1 + (cksum & 0xffff);
+        cksum1 = (cksum >> 16);
+    }
+
+    return (~cksum);
+}
+
+int udp_checksum(unsigned cksum, void *buf, size_t len)
+{
+    unsigned short cksum1 = 0;
+    cksum += htons(IPPROTO_UDP + len);
+    cksum = tcpip_checksum(cksum, buf, len, 1);
+
+    cksum1 = (cksum >> 16);
+    while (cksum1 > 0) {
+        cksum  = cksum1 + (cksum & 0xffff);
+        cksum1 = (cksum >> 16);
+    }
+
+    return (~cksum);
+}
+

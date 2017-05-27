@@ -694,49 +694,6 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	return 0;
 }
 
-unsigned tcpip_checksum(unsigned cksum,  const void *buf, size_t len, int finish)
-{
-	unsigned short *digit = (unsigned short *)buf;
-
-	while (len > 1) {
-		cksum += (*digit++);
-		len -= 2;
-	}
-
-	if (len > 0 && finish) {
-		unsigned short t0 = ntohs(*digit) & ~0xff;
-		cksum += htons(t0);
-	}
-
-	return cksum;
-}
-
-int ip_checksum(void *buf, size_t len)
-{
-    unsigned short *digit;
-    unsigned long cksum = 0;
-    unsigned short cksum1 = 0;
-
-    digit = (unsigned short *)buf;
-    while (len > 1) {
-        cksum += (*digit++);
-        len -= 2;
-    }
-
-    if (len > 0) {
-        cksum += *(unsigned char *)digit;
-    }
-
-    cksum1 = (cksum >> 16);
-    while (cksum1 > 0) {
-        cksum  = cksum1 + (cksum & 0xffff);
-        cksum1 = (cksum >> 16);
-    }
-
-    cksum1 = (~cksum);
-    return cksum1;
-}
-
 static int init_ipv4_tpl(nat_iphdr_t *ip, size_t len)
 {
 	ip->ip_hl = 5;
@@ -754,21 +711,6 @@ static int init_ipv4_tpl(nat_iphdr_t *ip, size_t len)
 	ip->ip_len = htons(len + sizeof(*ip));
 
 	return 0;
-}
-
-int tcp_checksum(unsigned cksum, void *buf, size_t len)
-{
-    unsigned short cksum1 = 0;
-    cksum += htons(6 + len);
-    cksum = tcpip_checksum(cksum, buf, len, 1);
-
-    cksum1 = (cksum >> 16);
-    while (cksum1 > 0) {
-        cksum  = cksum1 + (cksum & 0xffff);
-        cksum1 = (cksum >> 16);
-    }
-
-    return (~cksum);
 }
 
 static int handle_server_to_client(nat_conntrack_t *conn,
@@ -875,17 +817,13 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 
 	if (ip->ip_v == VERSION_IPV4) {
 		ip6 = NULL;
-
-		if (ip->ip_p == IPPROTO_UDP) {
-			_tcpup_len = udpip_frag_input(packet, len, (uint8_t *)_pkt_buf, sizeof(_pkt_buf));
-			return 0;
-		}
-
+		if (ip->ip_p == IPPROTO_UDP) goto process_udp;
 		CHECK_NAT_PROTOCOL(ip->ip_p, IPPROTO_TCP);
 		th  = (nat_tcphdr_t *)(ip + 1);
 		ops = (nat_conntrack_ops *)&ip_conntrack_ops;
 	} else if (ip->ip_v == VERSION_IPV6) {
 		ip6 = (nat_ip6hdr_t *)packet;
+		if (ip6->ip6_nxt == IPPROTO_UDP) goto process_udp;
 		CHECK_NAT_PROTOCOL(ip6->ip6_nxt, IPPROTO_TCP);
 		th  = (nat_tcphdr_t *)(ip6 + 1);
 		ops = (nat_conntrack_ops *)&ip6_conntrack_ops;
@@ -921,15 +859,10 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 
 	handle_client_to_server(conn, ops, th, packet, len);
 	conn->c.flags |= th->th_flags;
+	return 0;
 
+process_udp:
+	_tcpup_len = udpip_frag_input(packet, len, (uint8_t *)_pkt_buf, sizeof(_pkt_buf));
 	return 0;
 }
 
-void module_init(int port)
-{
-#if 0
-	init_ip6_tpl(&ip6_tpl);
-#endif
-
-	return;
-}

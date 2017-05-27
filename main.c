@@ -13,7 +13,6 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 
-void module_init(void);
 char * get_tcpup_data(int *len);
 char * get_tcpip_data(int *len);
 
@@ -210,10 +209,10 @@ int parse_sockaddr_in(struct sockaddr_in *info, const char *address)
     return 0;
 }
 
-static void run_config_script(const char *ifname, const char *script)
+static void run_config_script(const char *ifname, const char *script, const char *gateway)
 {
 	char setup_cmd[8192];
-	sprintf(setup_cmd, "%s %s", script, ifname);
+	sprintf(setup_cmd, "%s %s %s", script, ifname, gateway);
 	system(setup_cmd);
 	return;
 }
@@ -348,7 +347,7 @@ int main(int argc, char *argv[])
 
 	int save_uid = getuid();
 	setuid(0);
-	run_config_script(tun_name, script);
+	run_config_script(tun_name, script, inet_ntoa(ll_addr.sin_addr));
 
 	devfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	assert(devfd != -1);
@@ -358,8 +357,6 @@ int main(int argc, char *argv[])
 	assert(error == 0);
 
 	so_addr = ll_addr;
-
-	module_init();
 
 	for (; ; ) {
 		int nready;

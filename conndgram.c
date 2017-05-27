@@ -350,6 +350,7 @@ free_conn:
 
 			if ((item->last_alive > now) ||
 					(item->last_alive + timeout < now)) {
+				log_verbose("free datagram connection: %p, %d\n", conn, _nat_count);
 				free_nat_port(item->s.th_dport);
 				LIST_REMOVE(item, entry);
 				free(item);
@@ -495,24 +496,6 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	conn->s.ttl ++;
 
 	return sizeof(*up) + count + sizeof(_proto_tag);
-}
-
-int ip_checksum(void *buf, size_t len);
-unsigned tcpip_checksum(unsigned cksum,  const void *buf, size_t len, int finish);
-
-int udp_checksum(unsigned cksum, void *buf, size_t len)
-{
-    unsigned short cksum1 = 0;
-    cksum += htons(IPPROTO_UDP + len);
-    cksum = tcpip_checksum(cksum, buf, len, 1);
-
-    cksum1 = (cksum >> 16);
-    while (cksum1 > 0) {
-        cksum  = cksum1 + (cksum & 0xffff);
-        cksum1 = (cksum >> 16);
-    }
-
-    return (~cksum);
 }
 
 static int init_ipv4_tpl(nat_iphdr_t *ip, size_t len)

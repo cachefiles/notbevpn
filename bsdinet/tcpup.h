@@ -92,4 +92,8 @@ int tcpup_addoptions(struct tcpupopt *to, u_char *cp);
 ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit);
 ssize_t udpip_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit);
 
+unsigned tcpip_checksum(unsigned cksum,  const void *buf, size_t len, int finish);
+int udp_checksum(unsigned cksum, void *buf, size_t len);
+int tcp_checksum(unsigned cksum, void *buf, size_t len);
+int ip_checksum(void *buf, size_t len);
 #endif
