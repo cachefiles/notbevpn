@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <assert.h>
+#include <ctype.h>
 #include <netdb.h>
 
 #include <unistd.h>
@@ -231,7 +232,7 @@ int get_device_mtu(int sockfd, struct sockaddr *dest, socklen_t dlen, int def_mt
 	val = IP_PMTUDISC_DO;
 	setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &val, sizeof(val));
 #else
-#error "not support"
+	goto cleanup;
 #endif
 
 	if (dev_mtu > 0) {
@@ -345,7 +346,7 @@ int main(int argc, char *argv[])
 	devfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	assert(devfd != -1);
 
-	setresuid(save_uid, save_uid, save_uid);
+	setreuid(save_uid, save_uid);
 	error = bind(devfd, (struct sockaddr *)&so_addr, sizeof(so_addr));
 	assert(error == 0);
 
