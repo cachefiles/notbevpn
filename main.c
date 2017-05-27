@@ -210,6 +210,89 @@ static void run_config_script(const char *ifname, const char *script)
 	return;
 }
 
+int set_tcp_mss_by_mtu(int mtu);
+
+int get_device_mtu(int sockfd, struct sockaddr *dest, socklen_t dlen, int def_mtu)
+{
+	int val;
+	int total = 0;
+
+	int sht = 2;
+	int mtu = def_mtu;
+	char buf[1024 * 4];
+	static int dev_mtu = 0;
+
+#if defined(IP_DONTFRAG)
+	val = 1;
+	setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val));
+#endif
+
+#if defined(IP_MTU_DISCOVER)
+	val = IP_PMTUDISC_DO;
+	setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &val, sizeof(val));
+#else
+#error "not support"
+#endif
+
+	if (dev_mtu > 0) {
+		return dev_mtu;
+	}
+
+	while (mtu > 512) {
+		int save_mtu = mtu;
+		for (sht = 2; mtu > (1 << sht); sht++) {
+			int error  = sendto(sockfd, buf, mtu - 28, 0, dest, dlen);
+			if (error > 0) {
+				total += error;
+				goto next;
+			} else if (errno == EMSGSIZE) {
+				save_mtu = mtu;
+				mtu -= (1 << sht);
+			} else {
+				goto cleanup;
+			}
+		}
+		mtu = save_mtu;
+	}
+
+next:
+	for (; sht >= 2 && mtu > 512; sht--) {
+		int mid  = mtu + (1 << sht);
+		int error  = sendto(sockfd, buf, mid - 28, 0, dest, dlen);
+		if (error > 0) {
+			total += error;
+			mtu = mid;
+		} else if (errno != EMSGSIZE) {
+			goto cleanup;
+		}
+	}
+
+	dev_mtu = mtu;
+cleanup:
+	return mtu;
+}
+
+#define LEN_PADDING_ICMP sizeof(struct icmphdr)
+
+int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote)
+{
+	int err = 0;
+	int mtu = 1500;
+	int udpfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	if (udpfd != -1) {
+		err = bind(udpfd, local, sizeof(struct sockaddr_in));
+		assert(err == 0);
+
+		mtu = get_device_mtu(udpfd, remote, sizeof(struct sockaddr_in), 1500);
+		close(udpfd);
+	}
+
+	set_tcp_mss_by_mtu(mtu - 20 - LEN_PADDING_ICMP);
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	int i;

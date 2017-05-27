@@ -624,6 +624,21 @@ static int set_relay_info(u_char *target, int type, void *host, u_short port)
 	return p - (char *)target;
 }
 
+static int _tcp_mss = 1440;
+
+int set_tcp_mss_by_mtu(int mtu)
+{
+	if (mtu < 512 || mtu < sizeof(struct tcpuphdr)) {
+		return 0;
+	}
+
+	if (mtu < sizeof(struct tcpuphdr) + _tcp_mss) {
+		_tcp_mss = mtu - sizeof(struct tcpuphdr);
+	}
+
+	return 0;
+}
+
 static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops, nat_tcphdr_t *th, uint8_t *packet, size_t len)
 {
 	const uint8_t *data_start = NULL;
@@ -651,6 +666,11 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 		if (to.to_flags & TOF_SCALE) {
 			/* TODO: wscale will be not 7 */
 			conn->tcp_wscale = to.to_wscale;
+		}
+
+		if ((to.to_flags & TOF_MSS)
+				&& (_tcp_mss < to.to_mss)) {
+			to.to_mss = _tcp_mss;
 		}
 	}
 
@@ -780,6 +800,11 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 		to.to_flags |= TOF_SACKPERM;
 		to.to_flags |= TOF_SCALE;
 		to.to_wscale = 7;
+
+		if ((to.to_flags & TOF_MSS)
+				&& (_tcp_mss < to.to_mss)) {
+			to.to_mss = _tcp_mss;
+		}
 	}
 
 	offset = tcpip_addoptions(&to, (u_char *)(th + 1));
