@@ -101,8 +101,11 @@ int low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *ll_add
 	memcpy(&key, &packet[14], sizeof(key));
 	packet_decrypt(htons(key), buf, packet + sizeof(*hdr), count);
 
+	// fprintf(stderr, "low_link_recv_data: %d\n", count);
 	return count;
 }
+
+int ip_checksum(void *buf, size_t len);
 
 int low_link_send_data(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len)
 {
@@ -121,6 +124,10 @@ int low_link_send_data(int devfd, void *buf, size_t len, const struct sockaddr *
 	memcpy(_crypt_stream + 14, &key, 2);
 	packet_encrypt(htons(key), _crypt_stream + sizeof(*hdr), buf, len);
 
+	hdr->checksum = 0;
+	hdr->checksum = ip_checksum(_crypt_stream, len + sizeof(*hdr));
+
+	// fprintf(stderr, "low_link_send_data: %ld\n", len);
 	return sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, ll_addr, ll_len);
 }
 

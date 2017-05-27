@@ -835,6 +835,11 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 	nat_conntrack_t *item, *conn = NULL;
 
 	up = (struct tcpuphdr *)packet;
+	if (up->th_conv == htonl(TCPUP_PROTO_UDP)) {
+		_tcpip_len = udpup_frag_input(packet, len, (uint8_t *)_tcp_buf, sizeof(_tcp_buf));
+		return 0;
+	}
+
 	LIST_FOREACH(item, &_ipv4_header, entry) {
 		if (item->s.th_dport != up->th_conv) {
 			continue;
@@ -870,6 +875,12 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 
 	if (ip->ip_v == VERSION_IPV4) {
 		ip6 = NULL;
+
+		if (ip->ip_p == IPPROTO_UDP) {
+			_tcpup_len = udpip_frag_input(packet, len, (uint8_t *)_pkt_buf, sizeof(_pkt_buf));
+			return 0;
+		}
+
 		CHECK_NAT_PROTOCOL(ip->ip_p, IPPROTO_TCP);
 		th  = (nat_tcphdr_t *)(ip + 1);
 		ops = (nat_conntrack_ops *)&ip_conntrack_ops;

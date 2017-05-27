@@ -86,4 +86,10 @@ int tcpip_addoptions(struct tcpupopt *to, u_char *cp);
 int tcpup_dooptions(struct tcpupopt *to, u_char *cp, int cnt);
 int tcpup_addoptions(struct tcpupopt *to, u_char *cp);
 
+#define TCPUP_PROTO_UDP 0xfe800001
+#define TCPUP_PROTO_DNS 0xfe800000
+
+ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit);
+ssize_t udpip_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit);
+
 #endif

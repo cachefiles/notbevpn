@@ -6,7 +6,7 @@ VPATH  := $(THIS_PATH)
 
 BIN_FMT_TARGET := $(shell $(THIS_PATH)/getos.sh CC=$(CC))
 
-toyclient: main.o conntcpup.o socksify.o tcpuputils.o
+toyclient: main.o conntcpup.o socksify.o tcpuputils.o conndgram.o
 	$(CC) -o $@ $(LDFLAGS) $^ $(LDLIBS)
 
 socksify: conntrack.o socksify.o
