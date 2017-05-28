@@ -69,55 +69,6 @@ typedef struct _tcp_state_t {
 
 } tcp_state_t;
 
-static int init_ip6_tpl(nat_ip6hdr_t *tpl)
-{
-	return 0;
-}
-
-static int cksum_long_delta(u_long src, u_long dst)
-{
-	int acc = (src & 0xffff) - (dst & 0xffff);
-	return acc + (src >> 16) - (dst >> 16);
-}
-
-static int cksum_delta(void *ptr, size_t len)
-{
-	int acc = 0, i;
-	uint8_t padding[2];
-	uint16_t *d = (uint16_t *)ptr;
-
-	for (i = 0; i < len/2; i++) {
-		acc -= d[i];
-	}
-
-	if (len & 1) {
-		padding[0] = *((uint8_t *)ptr + len - 1);
-		padding[1] = 0;
-		acc -= *(uint16_t *)padding;
-	}
-
-	return acc;
-}
-
-static uint16_t update_cksum(uint16_t old, int delta)
-{
-	int acc;
-
-	acc = delta;
-	acc += old;
-
-	if (acc < 0) {
-		acc  = -acc;
-		acc  = (acc >> 16) + (acc & 0xffff);
-		acc += (acc >> 16);
-		return ~acc;
-	} else {
-		acc  = (acc >> 16) + (acc & 0xffff);
-		acc += (acc >> 16);
-		return acc;
-	}
-}
-
 static port_pool_t _tcp_pool = {};
 
 static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6, uint16_t port)
@@ -136,28 +87,21 @@ static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6, uint16_t
 
 	if (is_ipv6) {
 		src = (uint16_t *)&c->ip6_src;
-		nats = (uint16_t *)&s->ip6_dst;
-
 		dst = (uint16_t *)&c->ip6_dst;
-		natd = (uint16_t *)&s->ip6_src;
 
 		for (i = 0; i < 8; i++) {
-			s->ip_sum += (src[i] - nats[i]);
-			s->ip_sum += (dst[i] - natd[i]);
+			s->ip_sum += (src[i]);
+			s->ip_sum += (dst[i]);
 		}
 
 		s->th_sum = s->ip_sum;
-		assert(0);
 	} else {
 		src = (uint16_t *)&c->ip_src;
-		nats = (uint16_t *)&s->ip_dst;
-
 		dst = (uint16_t *)&c->ip_dst;
-		natd = (uint16_t *)&s->ip_src;
 
 		for (i = 0; i < 2; i++) {
-			s->ip_sum += (src[i] - nats[i]);
-			s->ip_sum += (dst[i] - natd[i]);
+			s->ip_sum += (src[i]);
+			s->ip_sum += (dst[i]);
 		}
 
 		s->th_sum = s->ip_sum;
@@ -190,38 +134,9 @@ typedef struct _nat_conntrack_t {
 } nat_conntrack_t;
 
 typedef struct _nat_conntrack_ops {
-	int (*adjust)(uint8_t *packet, int adjust);
-	int (*ip_nat)(tcp_state_t *tcpcb, uint8_t *packet);
 	nat_conntrack_t * (*lookup)(uint8_t *packet, uint16_t sport, uint16_t dport);
 	nat_conntrack_t * (*newconn)(uint8_t *packet, uint16_t sport, uint16_t dport);
 } nat_conntrack_ops;
-
-static int adjust_ipv4(uint8_t *packet, int adjust)
-{
-	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
-	uint16_t tlen   = htons(ip->ip_len) + adjust;
-	ip->ip_sum = update_cksum(ip->ip_sum, ip->ip_len - ntohs(tlen));
-	ip->ip_len = ntohs(tlen);
-
-	return 0;
-}
-
-static int ip_nat_ipv4(tcp_state_t *tcpcb, uint8_t *packet)
-{
-	uint16_t d0, d1;
-	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
-
-	ip->ip_src = tcpcb->ip_dst;
-	ip->ip_dst = tcpcb->ip_src;
-	ip->ip_sum = update_cksum(ip->ip_sum, tcpcb->ip_sum);
-
-	d0 = *(uint16_t *)&ip->ip_ttl;
-	ip->ip_ttl--;
-	d1 = *(uint16_t *)&ip->ip_ttl;
-	ip->ip_sum = update_cksum(ip->ip_sum, d0 - d1);
-
-	return tcpcb->ip_sum;
-}
 
 static time_t _ipv4_gc_time = 0;
 LIST_HEAD(nat_conntrack_q, _nat_conntrack_t) _ipv4_header = LIST_HEAD_INITIALIZER(_ipv4_header);
@@ -332,29 +247,9 @@ free_conn:
 }
 
 static nat_conntrack_ops ip_conntrack_ops = {
-	.ip_nat = ip_nat_ipv4,
-	.adjust = adjust_ipv4,
 	.lookup = lookup_ipv4,
 	.newconn = newconn_ipv4
 };
-
-static int ip_nat_ipv6(tcp_state_t *tcpcb, uint8_t *packet)
-{
-	nat_ip6hdr_t *ip6 = (nat_ip6hdr_t *)packet;
-
-	ip6->ip6_src = tcpcb->ip6_dst;
-	ip6->ip6_dst = tcpcb->ip6_src;
-	ip6->ip6_hlim --;
-
-	return tcpcb->ip_sum;
-}
-
-static int adjust_ipv6(uint8_t *packet, int adjust)
-{
-	nat_ip6hdr_t *ip = (nat_ip6hdr_t *)packet;
-	ip->ip6_plen += adjust;
-	return 0;
-}
 
 static time_t _ipv6_gc_time = 0;
 struct nat_conntrack_q _ipv6_header = LIST_HEAD_INITIALIZER(_ipv6_header);
@@ -418,16 +313,9 @@ free_conn:
 }
 
 static nat_conntrack_ops ip6_conntrack_ops = {
-	.ip_nat = ip_nat_ipv6,
 	.lookup = lookup_ipv6,
 	.newconn = newconn_ipv6
 };
-
-void *m_off(void *ptr, int off) 
-{
-	uint8_t *m = (uint8_t *)ptr;
-	return (m + off);
-}
 
 ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 {
@@ -456,17 +344,18 @@ ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 	th->th_sum = 0;
 
 	xchg(th->th_sport, th->th_dport, u_int16_t);
-	th->th_sum = update_cksum(0xffff, cksum_delta(th, sizeof(*th)));
-	th->th_sum = update_cksum(th->th_sum, cksum_long_delta(0xffffffff, ip->ip_src.s_addr));
-	th->th_sum = update_cksum(th->th_sum, cksum_long_delta(0xffffffff, ip->ip_dst.s_addr));
-	th->th_sum = update_cksum(th->th_sum, -htons(6 + sizeof(*th)));
+
+	unsigned cksum = 0;
+	cksum = tcpip_checksum(cksum, &ip->ip_dst, 4, 0);
+	cksum = tcpip_checksum(cksum, &ip->ip_src, 4, 0);
+	th->th_sum = tcp_checksum(cksum, th, sizeof(*th));
 
 	/* TODO: update tcp/ip checksum */
 
 	ip->ip_sum = 0;
 	ip->ip_len = ntohs(d_off(th +1, packet));
 	xchg(ip->ip_src, ip->ip_dst, struct in_addr);
-	ip->ip_sum = update_cksum(0xffff, cksum_delta(packet, sizeof(*ip)));
+	ip->ip_sum = ip_checksum(ip, sizeof(*ip));
 
 	return d_off(th +1, packet);
 }
