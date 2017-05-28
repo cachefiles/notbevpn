@@ -24,6 +24,8 @@
 
 #include <bsdinet/tcpup.h>
 
+#include "portpool.h"
+
 typedef unsigned char uint8_t;
 
 typedef struct ip nat_iphdr_t;
@@ -114,101 +116,7 @@ static uint16_t update_cksum(uint16_t old, int delta)
 	}
 }
 
-static int _nat_count = 0;
-static unsigned short _nat_port = 1024;
-static uint32_t _nat_port_bitmap[65536 / 32] = {0};
-
-static uint16_t use_nat_port(uint16_t port)
-{
-	int index = (port / 32);
-	int offset = (port % 32);
-
-	uint32_t old = _nat_port_bitmap[index];
-	_nat_port_bitmap[index] |= (1 << offset);
-	assert(old != _nat_port_bitmap[index]);
-	_nat_count++;
-
-	return htons(port + 1024);
-}
-
-#define USER_PORT_COUNT (65536 - 1024)
-
-static uint16_t alloc_nat_port()
-{
-	uint32_t bitmap;
-	int index, offset, bound;
-
-	if (_nat_count >= USER_PORT_COUNT) {
-		return 0;
-	}
-
-	_nat_port += (rand() % 17);
-	_nat_port %= USER_PORT_COUNT;
-
-	bound = (_nat_port >> 5);
-	bitmap = _nat_port_bitmap[bound];
-
-	for (offset = (_nat_port % 32); offset < 32; offset++) {
-		if (bitmap & (1 << offset)) {
-			_nat_port++;
-		} else {
-			return _nat_port;
-		}
-	}
-
-	for (index = bound + 1; index < (USER_PORT_COUNT / 32); index++) {
-		if (_nat_port_bitmap[index] != 0xffffffff) {
-			bitmap = _nat_port_bitmap[index];
-			offset = 0;
-			goto found;
-		}
-	}
-
-	for (index = 0; index < bound; index++) {
-		if (_nat_port_bitmap[index] != 0xffffffff) {
-			bitmap = _nat_port_bitmap[index];
-			offset = 0;
-			goto found;
-		}
-	}
-
-	_nat_port = bound * 32;
-	for (offset = 0; offset < (_nat_port % 32); offset++) {
-		if (bitmap & (1 << offset)) {
-			_nat_port++;
-		} else {
-			return _nat_port;
-		}
-	}
-
-	return 0;
-
-found:
-	_nat_port = index * 32;
-	for (offset = 0; offset < 32; offset++) {
-		if (bitmap & (1 << offset)) {
-			_nat_port++;
-		} else {
-			return _nat_port;
-		}
-	}
-
-	return _nat_port;
-}
-
-static uint16_t free_nat_port(uint16_t port)
-{
-	int index, offset;
-
-	port = htons(port) - 1024;
-	index = (port / 32);
-	offset = (port % 32);
-
-	_nat_port_bitmap[index] &= ~(1 << offset);
-	_nat_count--;
-
-	return 0;
-}
+static port_pool_t _tcp_pool = {};
 
 static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6, uint16_t port)
 {
@@ -218,7 +126,7 @@ static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6, uint16_t
 
 	s->ip_dst.s_addr = 0x5a5afeed;
 	s->ip_src.s_addr = 0x5a5afeed;
-	s->th_dport = use_nat_port(port);
+	s->th_dport = use_nat_port(&_tcp_pool, port);
 	s->th_sport = 0xfeed;
 
 	s->th_sum = 0;
@@ -356,7 +264,7 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 	time_t now;
 	nat_iphdr_t *ip;
 	nat_conntrack_t *conn;
-	unsigned short nat_port = alloc_nat_port();
+	unsigned short nat_port = alloc_nat_port(&_tcp_pool);
 
 	now = time(NULL);
 	if (nat_port == 0) {
@@ -395,21 +303,21 @@ free_conn:
 			int mflags = (TH_SYN| TH_FIN);
 			int s_established = (sflags & mflags) == TH_SYN;
 			int c_established = (cflags & mflags) == TH_SYN;
-			int timeout = (s_established && c_established)? establish_timeout(_nat_count): 60;
+			int timeout = (s_established && c_established)? establish_timeout(_tcp_pool._nat_count): 60;
 
 			if ((item->last_alive > now) ||
 					((cflags| sflags) & TH_RST) ||
 					(item->last_alive + timeout < now)) {
-				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _nat_count, now, item->last_alive);
+				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _tcp_pool._nat_count, now, item->last_alive);
 				log_verbose("connection: cflags %x sflags %x fin %x rst %x\n", item->c.flags, item->s.flags, TH_FIN, TH_RST);
-				free_nat_port(item->s.th_dport);
+				free_nat_port(&_tcp_pool, item->s.th_dport);
 				LIST_REMOVE(item, entry);
 				free(item);
 			}
 		}
 	}
 
-	log_verbose("new connection: %p, %d\n", conn, _nat_count);
+	log_verbose("new connection: %p, %d\n", conn, _tcp_pool._nat_count);
 	return conn;
 }
 
@@ -468,7 +376,7 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 	time_t now;
 	nat_ip6hdr_t *ip;
 	nat_conntrack_t *conn;
-	unsigned short nat_port = alloc_nat_port();
+	unsigned short nat_port = alloc_nat_port(&_tcp_pool);
 
 	now = time(NULL);
 	if (nat_port == 0) {
