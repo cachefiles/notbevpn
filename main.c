@@ -321,6 +321,10 @@ int main(int argc, char *argv[])
 		if (strcmp(argv[i], "-h") == 0) {
 			usage(argv[0]);
 			return 0;
+		} else if (strcmp(argv[i], "-mtu") == 0 && i + 1 < argc) {
+			int mtu = atoi(argv[i + 1]);
+			if (mtu > 0 && mtu < 1500) set_tcp_mss_by_mtu(mtu - 20 - sizeof(struct icmphdr));
+			i++;
 		} else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
 			script = argv[i + 1];
 			i++;
@@ -341,6 +345,8 @@ int main(int argc, char *argv[])
 		usage(argv[0]);
 		return 0;
 	}
+
+	update_tcp_mss((struct sockaddr *)&so_addr, (struct sockaddr *)&ll_addr);
 
 	tun = vpn_tun_alloc(tun_name);
 	if (tun == -1) {
