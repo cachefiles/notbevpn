@@ -618,7 +618,10 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 		assert(sizeof(conn->track_buf) >= sizeof(*up) + offset);
 		memcpy(conn->track_buf, up, sizeof(*up) + offset);
 		tuh->th_seq = htonl(ntohl(tuh->th_seq) -1);
-		conn->track_len = sizeof(*up) + offset;
+		conn->track_len = sizeof(*tuh) + offset;
+
+		tuh->th_opten = 0;
+		conn->track_len = sizeof(*tuh);
 	}
 
 	return 0;
@@ -808,6 +811,19 @@ process_udp:
 static int _need_track = 0;
 static int _last_track_round = 0;
 
+static int is_stale(nat_conntrack_t *item, time_t now)
+{
+	if (item->last_alive + 5 < now &&
+			item->last_alive + 50 > now &&
+			item->last_dir == DIRECT_SERVER_TO_CLIENT &&
+			item->c.pkt_sent + 10 < item->s.pkt_sent
+			&& item->c.byte_sent + 65536 < item->s.byte_sent) {
+		return 1;
+	}
+
+	return 0;
+}
+
 int tcpup_track_stage1()
 {
 	time_t now = time(NULL);
@@ -815,11 +831,7 @@ int tcpup_track_stage1()
 
 	_need_track = 0;
 	LIST_FOREACH(item, &_ipv4_header, entry) {
-		if (item->last_alive + 5 < now &&
-				item->last_alive + 50 > now &&
-				item->last_dir == DIRECT_SERVER_TO_CLIENT &&
-				item->c.pkt_sent + 10 < item->s.pkt_sent
-				&& item->c.byte_sent + 65536 < item->s.byte_sent) {
+		if (is_stale(item, now)) {
 			log_verbose("tcpup_track_stage1: %d/%d %d/%d\n",
 					item->c.byte_sent, item->c.pkt_sent,
 					item->s.byte_sent, item->s.pkt_sent);
@@ -840,11 +852,7 @@ int tcpup_track_stage2()
 		nat_conntrack_t *full_item = NULL;
 
 		LIST_FOREACH(item, &_ipv4_header, entry) {
-			if (item->last_alive + 5 < now &&
-					item->last_alive + 50 > now &&
-					item->last_dir == DIRECT_SERVER_TO_CLIENT &&
-					item->c.pkt_sent + 10 < item->s.pkt_sent
-					&& item->c.byte_sent + 65536 < item->s.byte_sent) {
+			if (is_stale(item, now)) {
 				if (item->track_round != _last_track_round) {
 					full_item = item;
 					break;
@@ -859,13 +867,15 @@ int tcpup_track_stage2()
 			_last_track_round++;
 		}
 
-		if (weak_item != NULL) {
-			_tcpup_len = weak_item->track_len;
-			memcpy(_pkt_buf, weak_item->track_buf, _tcpup_len);
-			weak_item->track_round = _last_track_round;
+		if (full_item != NULL) {
+			_tcpup_len = full_item->track_len;
+			memcpy(_pkt_buf, full_item->track_buf, _tcpup_len);
+			full_item->track_round = _last_track_round;
+			log_verbose("tcpup_track_stage2: %ld, %s\n", _tcpup_len, inet_ntoa(full_item->c.ip_dst));
 			return 1;
 		}
 
+		log_verbose("not tcpup_track_stage2: %ld\n", _tcpup_len);
 		_need_track = 0;
 	}
 
