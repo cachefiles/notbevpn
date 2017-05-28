@@ -704,7 +704,7 @@ static int _last_track_round = 0;
 static int is_stale(nat_conntrack_t *item, time_t now)
 {
 	if (item->last_alive + 5 < now &&
-			item->last_alive + 50 > now &&
+			item->last_alive + 500 > now &&
 			item->last_dir == DIRECT_SERVER_TO_CLIENT &&
 			item->c.pkt_sent + 10 < item->s.pkt_sent
 			&& item->c.byte_sent + 65536 < item->s.byte_sent) {

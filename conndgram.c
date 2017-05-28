@@ -176,13 +176,11 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 
 	ip = (nat_iphdr_t *)packet;
 	LIST_FOREACH(item, &_ipv4_header, entry) {
-		if (item->c.th_sport != sport ||
-				item->c.th_dport != dport) {
+		if (item->c.th_sport != sport) {
 			continue;
 		}
 
-		if (item->c.ip_src.s_addr == ip->ip_src.s_addr &&
-				item->c.ip_dst.s_addr == ip->ip_dst.s_addr) {
+		if (item->c.ip_src.s_addr == ip->ip_src.s_addr) {
 			item->last_alive = time(NULL);
 			return item;
 		}
@@ -284,13 +282,11 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 
 	ip = (nat_ip6hdr_t *)packet;
 	LIST_FOREACH(item, &_ipv4_header, entry) {
-		if (item->c.th_sport != sport ||
-				item->c.th_dport != dport) {
+		if (item->c.th_sport != sport) {
 			continue;
 		}
 
-		if (0 == memcmp(&item->c.ip_src, &ip->ip6_src, sizeof(ip->ip6_src)) &&
-				0 == memcmp(&item->c.ip_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
+		if (0 == memcmp(&item->c.ip_src, &ip->ip6_src, sizeof(ip->ip6_src))) {
 			item->last_alive = time(NULL);
 			return item;
 		}
