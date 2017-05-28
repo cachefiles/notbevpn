@@ -498,7 +498,7 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 
 	up->th_conv = conn->s.th_dport;
 	conn->track_len = 0;
-	if (count > 0) {
+	if (count > 0 || CHECK_FLAGS(up->th_flags, TH_SYN| TH_FIN| TH_RST)) {
 		conn->last_dir = DIRECT_CLIENT_TO_SERVER;
 		conn->c.byte_sent += count;
 		conn->c.pkt_sent ++;
@@ -592,7 +592,8 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 		conn->last_dir = DIRECT_SERVER_TO_CLIENT;
 		conn->s.byte_sent += count;
 		conn->s.pkt_sent ++;
-	} else if (conn->last_dir == DIRECT_SERVER_TO_CLIENT) {
+	} else if (CHECK_FLAGS(th->th_flags, TH_RST) || 
+			conn->last_dir == DIRECT_SERVER_TO_CLIENT) {
 		/* conn->s.pkt_sent ++; */
 		conn->last_dir = 0;
 	}
