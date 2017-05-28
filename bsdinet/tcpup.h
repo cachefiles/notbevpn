@@ -89,6 +89,8 @@ int tcpup_addoptions(struct tcpupopt *to, u_char *cp);
 #define TCPUP_PROTO_UDP 0xfe800001
 #define TCPUP_PROTO_DNS 0xfe800000
 
+int tcpup_track_stage1(void);
+int tcpup_track_stage2(void);
 ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit);
 ssize_t udpip_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit);
 

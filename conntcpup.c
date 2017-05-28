@@ -52,6 +52,8 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 
 typedef struct _tcp_state_t {
 	int flags;
+	int pkt_sent;
+	int byte_sent;
 
 	int th_sum;
 	int ip_sum;
@@ -169,11 +171,19 @@ static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, int is_ipv6, uint16_t
 	return;
 }
 
+#define DIRECT_CLIENT_TO_SERVER 0x01
+#define DIRECT_SERVER_TO_CLIENT 0x02
+
 typedef struct _nat_conntrack_t {
 	int is_ipv6;
-	int last_meta;
+	int last_dir;
 	int tcp_wscale;
 	time_t last_alive;
+
+	int track_len;
+	int track_round;
+	char track_buf[80];
+
 	tcp_state_t c; /* client side tcp state */
 	tcp_state_t s; /* server side tcp state */
 	LIST_ENTRY(_nat_conntrack_t) entry;
@@ -598,6 +608,18 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	_tcpup_len = sizeof(*up) + offset + count;
 
 	up->th_conv = conn->s.th_dport;
+	conn->track_len = 0;
+	if (count > 0) {
+		conn->last_dir = DIRECT_CLIENT_TO_SERVER;
+		conn->c.byte_sent += count;
+		conn->c.pkt_sent ++;
+	} else {
+		struct tcpuphdr *tuh = (struct tcpuphdr *)conn->track_buf;
+		assert(sizeof(conn->track_buf) >= sizeof(*up) + offset);
+		memcpy(conn->track_buf, up, sizeof(*up) + offset);
+		tuh->th_seq = htonl(ntohl(tuh->th_seq) -1);
+		conn->track_len = sizeof(*up) + offset;
+	}
 
 	return 0;
 }
@@ -673,6 +695,15 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 	cksum = tcpip_checksum(cksum, &ip->ip_dst, 4, 0);
 	cksum = tcpip_checksum(cksum, &ip->ip_src, 4, 0);
 	th->th_sum = tcp_checksum(cksum, th, sizeof(*th) + offset + count);
+
+	if (count > 0 || CHECK_FLAGS(th->th_flags, TH_FIN)) {
+		conn->last_dir = DIRECT_SERVER_TO_CLIENT;
+		conn->s.byte_sent += count;
+		conn->s.pkt_sent ++;
+	} else if (conn->last_dir == DIRECT_SERVER_TO_CLIENT) {
+		/* conn->s.pkt_sent ++; */
+		conn->last_dir = 0;
+	}
 
 	_tcpip_len = sizeof(*th) + sizeof(*ip) + offset + count;
 	return 0;
@@ -771,6 +802,73 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 
 process_udp:
 	_tcpup_len = udpip_frag_input(packet, len, (uint8_t *)_pkt_buf, sizeof(_pkt_buf));
+	return 0;
+}
+
+static int _need_track = 0;
+static int _last_track_round = 0;
+
+int tcpup_track_stage1()
+{
+	time_t now = time(NULL);
+	nat_conntrack_t *item = NULL;
+
+	_need_track = 0;
+	LIST_FOREACH(item, &_ipv4_header, entry) {
+		if (item->last_alive + 5 < now &&
+				item->last_alive + 50 > now &&
+				item->last_dir == DIRECT_SERVER_TO_CLIENT &&
+				item->c.pkt_sent + 10 < item->s.pkt_sent
+				&& item->c.byte_sent + 65536 < item->s.byte_sent) {
+			log_verbose("tcpup_track_stage1: %d/%d %d/%d\n",
+					item->c.byte_sent, item->c.pkt_sent,
+					item->s.byte_sent, item->s.pkt_sent);
+			_need_track = 1;
+			break;
+		}
+	}
+
+	return 0;
+}
+
+int tcpup_track_stage2()
+{
+	if (_need_track) {
+		time_t now = time(NULL);
+		nat_conntrack_t *item = NULL;
+		nat_conntrack_t *weak_item = NULL;
+		nat_conntrack_t *full_item = NULL;
+
+		LIST_FOREACH(item, &_ipv4_header, entry) {
+			if (item->last_alive + 5 < now &&
+					item->last_alive + 50 > now &&
+					item->last_dir == DIRECT_SERVER_TO_CLIENT &&
+					item->c.pkt_sent + 10 < item->s.pkt_sent
+					&& item->c.byte_sent + 65536 < item->s.byte_sent) {
+				if (item->track_round != _last_track_round) {
+					full_item = item;
+					break;
+				} else {
+					weak_item = item;
+				}
+			}
+		}
+
+		if (full_item == NULL) {
+			full_item = weak_item;
+			_last_track_round++;
+		}
+
+		if (weak_item != NULL) {
+			_tcpup_len = weak_item->track_len;
+			memcpy(_pkt_buf, weak_item->track_buf, _tcpup_len);
+			weak_item->track_round = _last_track_round;
+			return 1;
+		}
+
+		_need_track = 0;
+	}
+
 	return 0;
 }
 

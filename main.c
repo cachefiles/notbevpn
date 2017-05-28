@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <ctype.h>
 #include <netdb.h>
+#include <time.h>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -13,6 +14,8 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 
+int tcpup_track_stage1(void);
+int tcpup_track_stage2(void);
 char * get_tcpup_data(int *len);
 char * get_tcpip_data(int *len);
 
@@ -357,19 +360,43 @@ int main(int argc, char *argv[])
 	assert(error == 0);
 
 	so_addr = ll_addr;
+	int last_track_count = 0;
+	int last_track_enable = 0;
+	time_t last_track_time = time(NULL);
 
 	for (; ; ) {
 		int nready;
 		fd_set readfds;
 		char * packet;
+		struct timeval timeo = {};
 
 		FD_ZERO(&readfds);
 		FD_SET(tun, &readfds);
 		FD_SET(devfd, &readfds);
-		nready = select(tun < devfd? devfd +1: tun +1, &readfds, NULL, NULL, NULL);
+
+		timeo.tv_sec  = 1;
+		timeo.tv_usec = 0;
+
+		if (last_track_enable &&
+				tcpup_track_stage2() &&
+				(packet = get_tcpup_data(&len)) != NULL) {
+			low_link_send_data(devfd, packet, len, (struct sockaddr *)&so_addr, sizeof(so_addr));
+		}
+
+		nready = select(tun < devfd? devfd +1: tun +1, &readfds, NULL, NULL, &timeo);
 		if (nready == -1) {
 			perror("select");
 			break;
+		}
+
+		if (nready == 0 || ++last_track_count >= 10) {
+			time_t now = time(NULL);
+			if (now < last_track_time || last_track_time + 4 < now) { 
+				tcpup_track_stage1();
+				last_track_time  = now;
+				last_track_count = 0;
+			}
+			if (nready == 0) continue;
 		}
 
 		packet = (buf + 60);
@@ -396,14 +423,8 @@ int main(int argc, char *argv[])
 				goto clean;
 			}
 
-			len = tcpip_frag_input(packet, len, 1500);
-			if (len <= 0) {
-				break;
-			}
-
-			len = tun_write(tun, packet, len);
-			if (len <= 0) {
-				fprintf(stderr, "write tun failure: %d\n", errno);
+			if ((len > 0) && (len = tcpip_frag_input(packet, len, 1500)) > 0) {
+				len = tun_write(tun, packet, len);
 			}
 
 			break;
@@ -412,6 +433,7 @@ int main(int argc, char *argv[])
 		packet = get_tcpup_data(&len);
 		if (packet != NULL) {
 			low_link_send_data(devfd, packet, len, (struct sockaddr *)&so_addr, sizeof(so_addr));
+			last_track_enable = 1;
 		}
 	}
 
