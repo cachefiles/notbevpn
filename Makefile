@@ -9,9 +9,6 @@ BIN_FMT_TARGET := $(shell $(THIS_PATH)/getos.sh CC=$(CC))
 toyclient: main.o conntcpup.o socksify.o tcpuputils.o conndgram.o portpool.o
 	$(CC) -o $@ $(LDFLAGS) $^ $(LDLIBS)
 
-socksify: conntrack.o socksify.o
-	$(CC) -o $@ $(LDFLAGS) $^ $(LDLIBS)
-
 socksify.o: socksify_$(BIN_FMT_TARGET).c
 	$(CC) -o $@ -c $(CFLAGS) $^
 
