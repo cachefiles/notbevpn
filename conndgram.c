@@ -79,8 +79,6 @@ struct udpuphdr6 {
 
 typedef struct _udp_state_t {
 	int ttl;
-
-	int th_sum;
 	int ip_sum;
 
 	uint16_t th_sport;
@@ -101,54 +99,13 @@ static int init_ip6_tpl(nat_ip6hdr_t *tpl)
 
 static port_pool_t _udp_pool = {};
 
-static void alloc_nat_slot(udp_state_t *s, udp_state_t *c, int is_ipv6, uint16_t port)
+static void alloc_nat_slot(udp_state_t *s, udp_state_t *c, uint16_t port)
 {
-	int i;
-	uint16_t *src, *dst;
-	uint16_t *nats, *natd;
-
 	s->ip_dst.s_addr = 0x5a5afeed;
 	s->ip_src.s_addr = 0x5a5afeed;
 	s->th_dport = use_nat_port(&_udp_pool, port);
 	s->th_sport = 0xfeed;
-
-	s->th_sum = 0;
 	s->ip_sum = 0;
-
-	if (is_ipv6) {
-		src = (uint16_t *)&c->ip6_src;
-		nats = (uint16_t *)&s->ip6_dst;
-
-		dst = (uint16_t *)&c->ip6_dst;
-		natd = (uint16_t *)&s->ip6_src;
-
-		for (i = 0; i < 8; i++) {
-			s->ip_sum += (src[i] - nats[i]);
-			s->ip_sum += (dst[i] - natd[i]);
-		}
-
-		s->th_sum = s->ip_sum;
-		assert(0);
-	} else {
-		src = (uint16_t *)&c->ip_src;
-		nats = (uint16_t *)&s->ip_dst;
-
-		dst = (uint16_t *)&c->ip_dst;
-		natd = (uint16_t *)&s->ip_src;
-
-		for (i = 0; i < 2; i++) {
-			s->ip_sum += (src[i] - nats[i]);
-			s->ip_sum += (dst[i] - natd[i]);
-		}
-
-		s->th_sum = s->ip_sum;
-	}
-
-	s->th_sum += (c->th_sport - s->th_dport);
-	s->th_sum += (c->th_dport - s->th_sport);
-
-	c->ip_sum = -s->ip_sum;
-	c->th_sum = -s->th_sum;
 	return;
 }
 
@@ -156,12 +113,16 @@ typedef struct _nat_conntrack_t {
 	int is_ipv6;
 	int last_meta;
 	time_t last_alive;
+
+	void *ops;
 	udp_state_t c; /* client side tcp state */
 	udp_state_t s; /* server side tcp state */
 	LIST_ENTRY(_nat_conntrack_t) entry;
 } nat_conntrack_t;
 
 typedef struct _nat_conntrack_ops {
+	size_t  (*get_hdr_len)(void);
+	size_t (*set_hdr_buf)(void *buf, int proto, size_t total, udp_state_t *st);
 	nat_conntrack_t * (*lookup)(uint8_t *packet, uint16_t sport, uint16_t dport);
 	nat_conntrack_t * (*newconn)(uint8_t *packet, uint16_t sport, uint16_t dport);
 } nat_conntrack_ops;
@@ -235,7 +196,10 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 		conn->c.ip_src = ip->ip_src;
 		conn->c.ip_dst = ip->ip_dst;
 
-		alloc_nat_slot(&conn->s, &conn->c, 0, nat_port);
+		unsigned cksum = tcpip_checksum(0, &ip->ip_src, 4, 0);
+		conn->c.ip_sum = tcpip_checksum(cksum, &ip->ip_dst, 4, 0);
+
+		alloc_nat_slot(&conn->s, &conn->c, nat_port);
 		LIST_INSERT_HEAD(&_ipv4_header, conn, entry);
 	}
 
@@ -267,7 +231,37 @@ free_conn:
 	return conn;
 }
 
+static size_t ipv4_hdr_len(void)
+{
+	return sizeof(nat_iphdr_t);
+}
+
+static size_t ipv4_hdr_setbuf(void *buf, int proto, size_t total, udp_state_t *st)
+{
+	nat_iphdr_t *ip = (nat_iphdr_t *)buf;
+
+	ip->ip_hl = 5;
+	ip->ip_v  = 4;
+	ip->ip_tos = 0;
+	ip->ip_id  = 0;
+	ip->ip_off = htons(IP_DF);
+	ip->ip_ttl = 64;
+	ip->ip_p   = proto;
+
+	ip->ip_dst.s_addr = st->ip_dst.s_addr;
+	ip->ip_src.s_addr = st->ip_src.s_addr;
+	xchg(ip->ip_src, ip->ip_dst, struct in_addr);
+
+	ip->ip_sum = 0;
+	ip->ip_len = htons(total + sizeof(*ip));
+	ip->ip_sum = ip_checksum(ip, sizeof(*ip));
+
+	return 0;
+}
+
 static nat_conntrack_ops ip_conntrack_ops = {
+	.get_hdr_len = ipv4_hdr_len,
+	.set_hdr_buf = ipv4_hdr_setbuf,
 	.lookup = lookup_ipv4,
 	.newconn = newconn_ipv4
 };
@@ -319,7 +313,10 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 		conn->c.ip6_src = ip->ip6_src;
 		conn->c.ip6_dst = ip->ip6_dst;
 
-		alloc_nat_slot(&conn->s, &conn->c, 1, nat_port);
+		unsigned cksum = tcpip_checksum(0, &ip->ip6_src, 16, 0);
+		conn->c.ip_sum = tcpip_checksum(cksum, &ip->ip6_dst, 16, 0);
+
+		alloc_nat_slot(&conn->s, &conn->c, nat_port);
 		LIST_INSERT_HEAD(&_ipv6_header, conn, entry);
 	}
 
@@ -425,31 +422,21 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 {
 	size_t payload = 0;
 	const uint8_t *data_start = NULL;
-	nat_iphdr_t *ip = (nat_iphdr_t *)buf;
-
-	nat_udphdr_t *uh = (nat_udphdr_t *)(ip + 1);
+	nat_udphdr_t *uh = (nat_udphdr_t *)(buf + (*ops->get_hdr_len)());
 	payload = packet + len - (uint8_t *)(up + 1);
 
 	uh->uh_dport = conn->c.th_dport;
 	uh->uh_sport = conn->c.th_sport;
 	uh->uh_ulen  = htons(payload + sizeof(*uh));
 	uh->uh_sum   = 0;
+
 	xchg(uh->uh_sport, uh->uh_dport, u_int16_t);
-
-	init_ipv4_tpl(ip, payload + sizeof(*uh));
-	ip->ip_p   = IPPROTO_UDP;
-    ip->ip_dst = conn->c.ip_src;
-    ip->ip_src = conn->c.ip_dst;
-    ip->ip_sum = ip_checksum(ip, sizeof(*ip));
-
-    unsigned cksum = 0;
-    cksum = tcpip_checksum(cksum, &ip->ip_dst, 4, 0);
-    cksum = tcpip_checksum(cksum, &ip->ip_src, 4, 0);
 	memcpy(uh + 1, up + 1, payload);
-    uh->uh_sum = udp_checksum(cksum, uh, sizeof(*uh) + payload);
+    uh->uh_sum = udp_checksum(conn->c.ip_sum, uh, sizeof(*uh) + payload);
+	ops->set_hdr_buf(buf, IPPROTO_UDP, payload + sizeof(*uh), &conn->c);
 	conn->c.ttl ++;
 
-	return payload + sizeof(*uh) + sizeof(*ip);
+	return payload + sizeof(*uh) + ops->get_hdr_len();
 }
 
 ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
@@ -472,7 +459,7 @@ ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 		return 0;
 	}
 
-	ops = (nat_conntrack_ops *)&ip_conntrack_ops;
+	ops = (nat_conntrack_ops *)conn->ops;
 	return handle_server_to_client(conn, ops, up, packet, len, buf, limit);
 }
 
@@ -508,6 +495,7 @@ ssize_t udpip_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 	if (conn == NULL) {
 		conn = (*ops->newconn)(packet, uh->uh_sport, uh->uh_dport);
 		assert(conn != NULL);
+		conn->ops = ops;
 	}
 
 	return handle_client_to_server(conn, ops, uh, packet, len, buf, limit);

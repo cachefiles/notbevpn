@@ -388,6 +388,7 @@ int main(int argc, char *argv[])
 				(packet = get_tcpup_data(&len)) != NULL) {
 			fprintf(stderr, "send probe data: %d\n", len);
 			low_link_send_data(devfd, packet, len, (struct sockaddr *)&so_addr, sizeof(so_addr));
+			last_track_enable = 0;
 		}
 
 		nready = select(tun < devfd? devfd +1: tun +1, &readfds, NULL, NULL, &timeo);
