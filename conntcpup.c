@@ -735,7 +735,7 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 		}
 
 		if (!CHECK_FLAGS(th->th_flags, TH_SYN)) {
-			log_verbose("receive ACK packet without connection\n");
+			log_verbose("missing SYN packet without connection\n");
 			return 0;
 		}
 
