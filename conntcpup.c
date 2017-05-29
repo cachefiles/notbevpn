@@ -68,6 +68,29 @@ typedef struct _tcp_state_t {
 
 } tcp_state_t;
 
+static u_char type_len_map[8] = {0x0, 0x04, 0x0, 0x0, 0x10};
+#define RELAY_IPV4 0x01
+#define RELAY_IPV6 0x04
+
+static int set_relay_info(u_char *target, int type, void *host, u_short port)
+{      
+	int len;
+	char *p, buf[60];
+
+	p = (char *)target;
+	*p++ = (type & 0xff);
+	*p++ = 0;
+
+	memcpy(p, &port, 2);
+	p += 2;
+
+	len = type_len_map[type & 0x7];
+	memcpy(p, host, len);
+	p += len;
+
+	return p - (char *)target;
+}
+
 static port_pool_t _tcp_pool = {};
 
 static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, uint16_t port)
@@ -101,6 +124,8 @@ typedef struct _nat_conntrack_t {
 typedef struct _nat_conntrack_ops {
 	size_t (*get_hdr_len)(void);
 	size_t (*set_hdr_buf)(void *buf, int proto, size_t total, tcp_state_t *st);
+
+	size_t (*set_relay_info)(void *buf, tcp_state_t *st);
 	nat_conntrack_t * (*lookup)(uint8_t *packet, uint16_t sport, uint16_t dport);
 	nat_conntrack_t * (*newconn)(uint8_t *packet, uint16_t sport, uint16_t dport);
 } nat_conntrack_ops;
@@ -244,9 +269,15 @@ static size_t ipv4_hdr_setbuf(void *buf, int proto, size_t total, tcp_state_t *s
 	return 0;
 }
 
+static size_t ipv4_set_relay(void *buf, tcp_state_t *st)
+{
+	return set_relay_info(buf, RELAY_IPV4, &st->ip_dst, st->th_dport);
+}
+
 static nat_conntrack_ops ip_conntrack_ops = {
 	.get_hdr_len = ipv4_hdr_len,
 	.set_hdr_buf = ipv4_hdr_setbuf,
+	.set_relay_info = ipv4_set_relay,
 	.lookup = lookup_ipv4,
 	.newconn = newconn_ipv4
 };
@@ -335,9 +366,15 @@ size_t ipv6_hdr_setbuf(void *buf, int proto, size_t total, tcp_state_t *st)
 	return 0;
 }
 
+static size_t ipv6_set_relay(void *buf, tcp_state_t *st)
+{
+	return set_relay_info(buf, RELAY_IPV6, &st->ip6_dst, st->th_dport);
+}
+
 static nat_conntrack_ops ip6_conntrack_ops = {
 	.get_hdr_len = ipv6_hdr_len,
 	.set_hdr_buf = ipv6_hdr_setbuf,
+	.set_relay_info = ipv6_set_relay,
 	.lookup = lookup_ipv6,
 	.newconn = newconn_ipv6
 };
@@ -433,29 +470,6 @@ void * get_tcpip_data(int *len)
 }
 
 static u_char _null_[28] = {0};
-static u_char type_len_map[8] = {0x0, 0x04, 0x0, 0x0, 0x10};
-#define RELAY_IPV4 0x01
-#define RELAY_IPV6 0x04
-
-static int set_relay_info(u_char *target, int type, void *host, u_short port)
-{      
-	int len;
-	char *p, buf[60];
-
-	p = (char *)target;
-	*p++ = (type & 0xff);
-	*p++ = 0;
-
-	memcpy(p, &port, 2);
-	p += 2;
-
-	len = type_len_map[type & 0x7];
-	memcpy(p, host, len);
-	p += len;
-
-	return p - (char *)target;
-}
-
 static int _tcp_mss = 1440;
 
 int set_tcp_mss_by_mtu(int mtu)
@@ -491,7 +505,7 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 
 	if (th->th_flags & TH_SYN) {
 		to.to_flags |= TOF_DESTINATION;
-		to.to_dslen  = set_relay_info(_null_, RELAY_IPV4, &conn->c.ip_dst, th->th_dport);
+		to.to_dslen  = (*ops->set_relay_info)(_null_, &conn->c);
 		to.to_dsaddr = _null_;
 
 		if (to.to_flags & TOF_SCALE) {
