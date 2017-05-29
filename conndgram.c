@@ -466,16 +466,16 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 		nat_conntrack_ops *ops, struct udpuphdr4 *up, uint8_t *packet, size_t len, uint8_t *buf, size_t limit)
 {
 	size_t payload = 0;
-	const uint8_t *data_start = NULL;
+	uint8_t *base = (uint8_t *)up;
 	nat_udphdr_t *uh = (nat_udphdr_t *)(buf + (*ops->get_hdr_len)());
 	assert (len >= sizeof(*up));
 
 	unsigned doff = (up->uh.u_doff << 2);
-	payload = packet + len - (((uint8_t*)up) + doff);
+	payload = packet + len - (base + doff);
 	assert (len >= doff);
 
 	assert (doff >= sizeof(*up));
-	int check = update_conntrack(conn, ((uint8_t *)up) + sizeof(up->uh), doff - sizeof(up));
+	int check = update_conntrack(conn, base + sizeof(up->uh), doff - sizeof(up->uh));
 	if (check != 0) {
 		/* ignore bad packet */
 		return 0;
@@ -487,8 +487,8 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 	uh->uh_sum   = 0;
 
 	xchg(uh->uh_sport, uh->uh_dport, u_int16_t);
-	memcpy(uh + 1, ((uint8_t*)up) + doff, payload);
-    uh->uh_sum = udp_checksum(conn->c.ip_sum, uh, sizeof(*uh) + payload);
+	memcpy(uh + 1, base + doff, payload);
+	uh->uh_sum = udp_checksum(conn->c.ip_sum, uh, sizeof(*uh) + payload);
 	ops->set_hdr_buf(buf, IPPROTO_UDP, payload + sizeof(*uh), &conn->c);
 	conn->c.ttl ++;
 
