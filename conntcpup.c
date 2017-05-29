@@ -114,7 +114,7 @@ typedef struct _nat_conntrack_t {
 
 	int track_len;
 	int track_round;
-	char track_buf[80];
+	char track_buf[100];
 
 	tcp_state_t c; /* client side tcp state */
 	tcp_state_t s; /* server side tcp state */
@@ -570,20 +570,21 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	_tcpup_len = sizeof(*up) + offset + count;
 
 	up->th_conv = conn->s.th_dport;
-	conn->track_len = 0;
 	if (count > 0 || CHECK_FLAGS(up->th_flags, TH_SYN| TH_FIN| TH_RST)) {
 		conn->last_dir = DIRECT_CLIENT_TO_SERVER;
 		conn->c.byte_sent += count;
 		conn->c.pkt_sent ++;
+		// conn->track_len = 0;
 	} else {
 		struct tcpuphdr *tuh = (struct tcpuphdr *)conn->track_buf;
 		assert(sizeof(conn->track_buf) >= sizeof(*up) + offset);
-		memcpy(conn->track_buf, up, sizeof(*up) + offset);
-		tuh->th_seq = htonl(ntohl(tuh->th_seq) -1);
-		conn->track_len = sizeof(*tuh) + offset;
 
+		memcpy(conn->track_buf, up, sizeof(*up) + offset);
+		conn->track_len = sizeof(*tuh) + offset;
+#if 1
 		tuh->th_opten = 0;
 		conn->track_len = sizeof(*tuh);
+#endif
 	}
 
 	return 0;
@@ -639,6 +640,7 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 		conn->last_dir = DIRECT_SERVER_TO_CLIENT;
 		conn->s.byte_sent += count;
 		conn->s.pkt_sent ++;
+		conn->track_len = 0;
 	} else if (CHECK_FLAGS(th->th_flags, TH_RST) || 
 			conn->last_dir == DIRECT_SERVER_TO_CLIENT) {
 		/* conn->s.pkt_sent ++; */
@@ -763,8 +765,20 @@ static time_t _last_track_time = 0;
 
 static int is_stale(nat_conntrack_t *item, time_t now)
 {
-	if (item->last_alive + 5 < now &&
-			item->last_alive + 500 > now &&
+	int limit = 120;
+
+	if ((item->c.flags & TH_RST) ||
+			(item->s.flags & (TH_RST| TH_FIN))) {
+		return 0;
+	}
+
+	if ((item->c.flags & TH_FIN)) {
+		limit = 30;
+	}
+
+	if (item->last_alive + 2 < now &&
+			item->last_alive + limit > now &&
+			item->track_len > 0 &&
 			item->last_dir == DIRECT_SERVER_TO_CLIENT &&
 			item->c.pkt_sent + 10 < item->s.pkt_sent
 			&& item->c.byte_sent + 65536 < item->s.byte_sent) {
@@ -850,7 +864,8 @@ found:
 			_tcpup_len = full_item->track_len;
 			memcpy(_pkt_buf, full_item->track_buf, _tcpup_len);
 			full_item->track_round = _last_track_round;
-			log_verbose("tcpup_track_stage2: %ld, %s\n", _tcpup_len, inet_ntoa(full_item->c.ip_dst));
+			log_verbose("tcpup_track_stage2: %ld, %p, %x %x %s\n",
+					_tcpup_len, full_item, full_item->c.flags, full_item->s.flags & TH_FIN, inet_ntoa(full_item->c.ip_dst));
 			return 1;
 		}
 
