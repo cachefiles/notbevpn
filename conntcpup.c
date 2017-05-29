@@ -574,7 +574,7 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 		conn->last_dir = DIRECT_CLIENT_TO_SERVER;
 		conn->c.byte_sent += count;
 		conn->c.pkt_sent ++;
-		// conn->track_len = 0;
+		conn->track_len = 0;
 	} else {
 		struct tcpuphdr *tuh = (struct tcpuphdr *)conn->track_buf;
 		assert(sizeof(conn->track_buf) >= sizeof(*up) + offset);
@@ -636,11 +636,10 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 	th->th_sum = tcp_checksum(conn->c.ip_sum, th, sizeof(*th) + offset + count);
 	(*ops->set_hdr_buf)(_tcp_buf, IPPROTO_TCP, sizeof(*th) + offset + count, &conn->c);
 
-	if (count > 0 || CHECK_FLAGS(th->th_flags, TH_FIN)) {
+	if (count > 0) {
 		conn->last_dir = DIRECT_SERVER_TO_CLIENT;
 		conn->s.byte_sent += count;
 		conn->s.pkt_sent ++;
-		conn->track_len = 0;
 	} else if (CHECK_FLAGS(th->th_flags, TH_RST) || 
 			conn->last_dir == DIRECT_SERVER_TO_CLIENT) {
 		/* conn->s.pkt_sent ++; */
@@ -862,8 +861,11 @@ found:
 
 		if (full_item != NULL) {
 			_tcpup_len = full_item->track_len;
-			memcpy(_pkt_buf, full_item->track_buf, _tcpup_len);
 			full_item->track_round = _last_track_round;
+
+			memcpy(_pkt_buf, full_item->track_buf, _tcpup_len);
+			struct tcpuphdr *tuh = (struct tcpuphdr *)_pkt_buf;
+			tuh->th_seq = htonl(ntohl(tuh->th_seq) -1);
 			log_verbose("tcpup_track_stage2: %ld, %p, %x %x %s\n",
 					_tcpup_len, full_item, full_item->c.flags, full_item->s.flags & TH_FIN, inet_ntoa(full_item->c.ip_dst));
 			return 1;
