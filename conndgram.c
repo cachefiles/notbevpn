@@ -417,7 +417,7 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 	return sizeof(*up) + count + sizeof(_proto_tag);
 }
 
-static void update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
+static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 {
 	int is_ipv4 = 0;
 	int is_ipv6 = 0;
@@ -443,9 +443,8 @@ static void update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 				break;
 
 			default:
-				printf("tag: %x\n", *optp);
-				assert(0);
-				break;
+				log_verbose("tag: %x %ld %ld\n", *optp, optlen, len);
+				return -1;
 		}
 
 		optlen -= optp[1];
@@ -460,7 +459,7 @@ static void update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 		conn->c.ip_sum = tcpip_checksum(cksum, &conn->c.ip6_dst, 16, 0);
 	}
 
-	return;
+	return 0;
 }
 
 static int handle_server_to_client(nat_conntrack_t *conn,
@@ -476,7 +475,11 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 	assert (len >= doff);
 
 	assert (doff >= sizeof(*up));
-	update_conntrack(conn, ((uint8_t *)up) + sizeof(up->uh), doff - sizeof(up));
+	int check = update_conntrack(conn, ((uint8_t *)up) + sizeof(up->uh), doff - sizeof(up));
+	if (check != 0) {
+		/* ignore bad packet */
+		return 0;
+	}
 
 	uh->uh_dport = conn->c.th_dport;
 	uh->uh_sport = conn->c.th_sport;

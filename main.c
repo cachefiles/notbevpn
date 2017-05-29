@@ -75,7 +75,7 @@ int packet_encrypt(unsigned short key, void *dst, const void *src, size_t len)
 	return 0;
 }
 
-#define IPHDR_SKIP_LEN 20
+static int IPHDR_SKIP_LEN = 0;
 
 int low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *ll_addr, socklen_t *ll_len)
 {
@@ -358,7 +358,16 @@ int main(int argc, char *argv[])
 	setuid(0);
 	run_config_script(tun_name, script, inet_ntoa(ll_addr.sin_addr));
 
-	devfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+#ifdef __linux__
+	devfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+#else
+	devfd = -1;
+#endif
+	if (devfd == -1) {
+		devfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+		IPHDR_SKIP_LEN = 20;
+	}
+
 	assert(devfd != -1);
 
 	setreuid(save_uid, save_uid);
