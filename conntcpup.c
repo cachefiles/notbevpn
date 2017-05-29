@@ -786,10 +786,21 @@ int tcpup_track_stage1()
 					item->c.byte_sent, item->c.pkt_sent,
 					item->s.byte_sent, item->s.pkt_sent);
 			_need_track = 1;
+			goto cleanup;
+		}
+	}
+
+	LIST_FOREACH(item, &_ipv6_header, entry) {
+		if (is_stale(item, now)) {
+			log_verbose("tcpup_track_stage1: %d/%d %d/%d\n",
+					item->c.byte_sent, item->c.pkt_sent,
+					item->s.byte_sent, item->s.pkt_sent);
+			_need_track = 1;
 			break;
 		}
 	}
 
+cleanup:
 	return 0;
 }
 
@@ -805,13 +816,25 @@ int tcpup_track_stage2()
 			if (is_stale(item, now)) {
 				if (item->track_round != _last_track_round) {
 					full_item = item;
-					break;
+					goto found;
 				} else {
 					weak_item = item;
 				}
 			}
 		}
 
+		LIST_FOREACH(item, &_ipv6_header, entry) {
+			if (is_stale(item, now)) {
+				if (item->track_round != _last_track_round) {
+					full_item = item;
+					goto found;
+				} else {
+					weak_item = item;
+				}
+			}
+		}
+
+found:
 		if (full_item == NULL) {
 			full_item = weak_item;
 			if (now != _last_track_time) {
