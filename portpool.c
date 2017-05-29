@@ -27,6 +27,7 @@ uint16_t alloc_nat_port(port_pool_t *pool)
 	uint32_t bitmap;
 	int index, offset, bound;
 
+	pool->_nat_port_bitmap[0] = 0xffffffff;
 	if (pool->_nat_count >= USER_PORT_COUNT) {
 		return 0;
 	}

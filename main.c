@@ -95,9 +95,9 @@ int low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *ll_add
 	count -= sizeof(*hdr);
 
 	hdr = (struct icmphdr *)(packet);
-	if (hdr->reserved[0] == ICMP_CLIENT_FILL) return -1;
-	if (hdr->reserved[1] == ICMP_CLIENT_FILL) return -1;
-	if (hdr->u0.ident != (getpid() & 0xffff)) return -1;
+	if ((hdr->reserved[0] != ICMP_SERVER_FILL)
+			&& (hdr->reserved[1] != ICMP_SERVER_FILL)) return -1;
+	if (IPHDR_SKIP_LEN != 0 && hdr->u0.ident != (getpid() & 0xffff)) return -1;
 	if (hdr->code == 0x08) return -1;
 
 	memcpy(&key, &packet[14], sizeof(key));
@@ -369,6 +369,9 @@ int main(int argc, char *argv[])
 	}
 
 	assert(devfd != -1);
+	int bufsiz = 384 * 1024;
+	setsockopt(devfd, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
+	setsockopt(devfd, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
 
 	setreuid(save_uid, save_uid);
 	error = bind(devfd, (struct sockaddr *)&so_addr, sizeof(so_addr));
