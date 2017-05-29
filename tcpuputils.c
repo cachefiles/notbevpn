@@ -235,7 +235,7 @@ int tcpip_addoptions(struct tcpupopt *to, u_char *optp)
 	return (optlen);  
 }  
 
-#define TCPUP_MAXOLEN 40
+#define TCPUP_MAXOLEN 64
 
 /*
  * Parse TCP options and place in tcpupopt.

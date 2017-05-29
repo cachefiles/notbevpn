@@ -291,14 +291,14 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 	nat_conntrack_t *item;
 
 	ip = (nat_ip6hdr_t *)packet;
-	LIST_FOREACH(item, &_ipv4_header, entry) {
+	LIST_FOREACH(item, &_ipv6_header, entry) {
 		if (item->c.th_sport != sport ||
 				item->c.th_dport != dport) {
 			continue;
 		}
 
-		if (0 == memcmp(&item->c.ip_src, &ip->ip6_src, sizeof(ip->ip6_src)) &&
-				0 == memcmp(&item->c.ip_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
+		if (0 == memcmp(&item->c.ip6_src, &ip->ip6_src, sizeof(ip->ip6_src)) &&
+				0 == memcmp(&item->c.ip6_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
 			item->last_alive = time(NULL);
 			return item;
 		}
@@ -311,7 +311,7 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 {
 	time_t now;
 	nat_ip6hdr_t *ip;
-	nat_conntrack_t *conn;
+	nat_conntrack_t *conn, *item, *next;
 	unsigned short nat_port = alloc_nat_port(&_tcp_pool);
 
 	now = time(NULL);
@@ -334,6 +334,7 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 		unsigned cksum = tcpip_checksum(0, &ip->ip6_src, 16, 0);
 		conn->c.ip_sum = tcpip_checksum(cksum, &ip->ip6_dst, 16, 0);
 
+		log_verbose("new item %p\n", conn);
 		alloc_nat_slot(&conn->s, &conn->c, nat_port);
 		LIST_INSERT_HEAD(&_ipv6_header, conn, entry);
 	}
@@ -341,6 +342,28 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 free_conn:
 	if (now < _ipv6_gc_time || now > _ipv6_gc_time + 120) {
 		_ipv6_gc_time = now;
+		LIST_FOREACH_SAFE(item, &_ipv6_header, entry, next) {
+			if (item == conn) {
+				continue;
+			}
+
+			int cflags = item->c.flags;
+			int sflags = item->s.flags;
+			int mflags = (TH_SYN| TH_FIN);
+			int s_established = (sflags & mflags) == TH_SYN;
+			int c_established = (cflags & mflags) == TH_SYN;
+			int timeout = (s_established && c_established)? establish_timeout(_tcp_pool._nat_count): 60;
+
+			if ((item->last_alive > now) ||
+					((cflags| sflags) & TH_RST) ||
+					(item->last_alive + timeout < now)) {
+				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _tcp_pool._nat_count, now, item->last_alive);
+				log_verbose("connection: cflags %x sflags %x fin %x rst %x\n", item->c.flags, item->s.flags, TH_FIN, TH_RST);
+				free_nat_port(&_tcp_pool, item->s.th_dport);
+				LIST_REMOVE(item, entry);
+				free(item);
+			}
+		}
 	}
 
 	return conn;
@@ -357,11 +380,12 @@ size_t ipv6_hdr_setbuf(void *buf, int proto, size_t total, tcp_state_t *st)
 
 	ip->ip6_flow = htonl(0x60000000);
 	ip->ip6_nxt  = proto;
-	ip->ip6_plen = total;
+	ip->ip6_plen = htons(total);
 	ip->ip6_hlim = 64;
 
 	ip->ip6_src = st->ip6_src;
 	ip->ip6_dst = st->ip6_dst;
+	xchg(ip->ip6_src, ip->ip6_dst, struct in6_addr);
 
 	return 0;
 }
@@ -383,7 +407,6 @@ ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 {
 	int acc = 0;
 	int flags = th->th_flags;
-	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 
 	if (flags & TH_RST) {
 		log_error("drop RST packet\n");
@@ -408,16 +431,28 @@ ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 	xchg(th->th_sport, th->th_dport, u_int16_t);
 
 	unsigned cksum = 0;
-	cksum = tcpip_checksum(cksum, &ip->ip_dst, 4, 0);
-	cksum = tcpip_checksum(cksum, &ip->ip_src, 4, 0);
-	th->th_sum = tcp_checksum(cksum, th, sizeof(*th));
+	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 
-	/* TODO: update tcp/ip checksum */
+	if (ip->ip_v == VERSION_IPV4) {
+		cksum = tcpip_checksum(cksum, &ip->ip_dst, 4, 0);
+		cksum = tcpip_checksum(cksum, &ip->ip_src, 4, 0);
+		th->th_sum = tcp_checksum(cksum, th, sizeof(*th));
 
-	ip->ip_sum = 0;
-	ip->ip_len = ntohs(d_off(th +1, packet));
-	xchg(ip->ip_src, ip->ip_dst, struct in_addr);
-	ip->ip_sum = ip_checksum(ip, sizeof(*ip));
+		ip->ip_sum = 0;
+		ip->ip_len = ntohs(d_off(th +1, packet));
+		xchg(ip->ip_src, ip->ip_dst, struct in_addr);
+		ip->ip_sum = ip_checksum(ip, sizeof(*ip));
+	} else if (ip->ip_v == VERSION_IPV6) {
+		nat_ip6hdr_t *ip6 = (nat_ip6hdr_t *)packet;
+		cksum = tcpip_checksum(cksum, &ip6->ip6_dst, 16, 0);
+		cksum = tcpip_checksum(cksum, &ip6->ip6_src, 16, 0);
+		th->th_sum = tcp_checksum(cksum, th, sizeof(*th));
+
+		ip6->ip6_plen = ntohs(d_off(th +1, th));
+		xchg(ip6->ip6_src, ip6->ip6_dst, struct in6_addr);
+	} else {
+		return 0;
+	}
 
 	return d_off(th +1, packet);
 }
@@ -596,6 +631,7 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 	count = ((packet + len) - data_start);
 	memcpy(((u_char *)(th + 1)) + offset, data_start, count);
 
+	assert (ops == conn->ops);
 	th->th_sum = tcp_checksum(conn->c.ip_sum, th, sizeof(*th) + offset + count);
 	(*ops->set_hdr_buf)(_tcp_buf, IPPROTO_TCP, sizeof(*th) + offset + count, &conn->c);
 
@@ -632,12 +668,22 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 
 		item->last_alive = time(NULL);
 		conn = item;
+		goto found;
 	}
 
-	if (conn == NULL) {
-		return tcpup_frag_rst(up, packet);
+	LIST_FOREACH(item, &_ipv6_header, entry) {
+		if (item->s.th_dport != up->th_conv) {
+			continue;
+		}
+
+		item->last_alive = time(NULL);
+		conn = item;
+		goto found;
 	}
 
+	return tcpup_frag_rst(up, packet);
+
+found:
 	ops = (nat_conntrack_ops *)conn->ops;
 	handle_server_to_client(conn, ops, up, packet, len);
 	conn->s.flags |= up->th_flags;
