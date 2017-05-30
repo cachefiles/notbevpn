@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <unistd.h>
 #include <arpa/inet.h>
 
 #ifdef __linux__
@@ -91,14 +92,35 @@ static int set_relay_info(u_char *target, int type, void *host, u_short port)
 	return p - (char *)target;
 }
 
+uint16_t get_client_id()
+{
+	static uint16_t _cksum = 0;
+	struct {
+		pid_t pid;
+		time_t now;
+		void * vptr;
+	} _id;
+	
+	for (; _cksum == 0; sleep(1)) {
+		_id.pid = getpid();
+		_id.now = time(NULL);
+		_id.vptr = malloc(sizeof(_id));
+		_cksum = ip_checksum(&_id, sizeof(_id));
+		free(_id.vptr);
+	}
+
+	return _cksum;
+}
+
 static port_pool_t _tcp_pool = {};
 
 static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, uint16_t port)
 {
-	s->ip_dst.s_addr = 0x5a5afeed;
-	s->ip_src.s_addr = 0x5a5afeed;
-	s->th_dport = use_nat_port(&_tcp_pool, port);
-	s->th_sport = 0xfeed;
+	uint16_t convs[2] = {};
+	s->th_dport = convs[0] = use_nat_port(&_tcp_pool, port);
+	s->th_sport = convs[1] = get_client_id();
+	memcpy(&s->ip_src, convs, sizeof(s->ip_src));
+	memcpy(&s->ip_dst, convs, sizeof(s->ip_dst));
 	s->ip_sum = 0;
 	return;
 }
@@ -569,7 +591,7 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	memcpy(((u_char *)(up + 1)) + offset, data_start, count);
 	_tcpup_len = sizeof(*up) + offset + count;
 
-	up->th_conv = conn->s.th_dport;
+	up->th_conv = conn->s.ip_src.s_addr;
 	if (count > 0 || CHECK_FLAGS(up->th_flags, TH_SYN| TH_FIN| TH_RST)) {
 		conn->last_dir = DIRECT_CLIENT_TO_SERVER;
 		conn->c.byte_sent += count;
@@ -663,7 +685,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 	}
 
 	LIST_FOREACH(item, &_ipv4_header, entry) {
-		if (item->s.th_dport != up->th_conv) {
+		if (item->s.ip_src.s_addr != up->th_conv) {
 			continue;
 		}
 
@@ -673,7 +695,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 	}
 
 	LIST_FOREACH(item, &_ipv6_header, entry) {
-		if (item->s.th_dport != up->th_conv) {
+		if (item->s.ip_src.s_addr != up->th_conv) {
 			continue;
 		}
 

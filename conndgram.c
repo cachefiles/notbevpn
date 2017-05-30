@@ -92,14 +92,16 @@ typedef struct _udp_state_t {
 
 } udp_state_t;
 
+uint16_t get_client_id();
 static port_pool_t _udp_pool = {};
 
 static void alloc_nat_slot(udp_state_t *s, udp_state_t *c, uint16_t port)
 {
-	s->ip_dst.s_addr = 0x5a5afeed;
-	s->ip_src.s_addr = 0x5a5afeed;
-	s->th_dport = use_nat_port(&_udp_pool, port);
-	s->th_sport = 0xfeed;
+	uint16_t convs[2] = {};
+	s->th_dport = convs[0] = use_nat_port(&_udp_pool, port);
+	s->th_sport = convs[1] = get_client_id();
+	memcpy(&s->ip_src, convs, sizeof(s->ip_src));
+	memcpy(&s->ip_dst, convs, sizeof(s->ip_dst));
 	s->ip_sum = 0;
 	return;
 }
@@ -379,7 +381,7 @@ static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *
 	count = (packet + len - data_start);
 	memcpy(up + 1, data_start, count);
 
-	up->uh.u_conv = conn->s.th_dport;
+	up->uh.u_conv = conn->s.ip_src.s_addr;
 	conn->s.ttl ++;
 
 	return sizeof(*up) + count + sizeof(_proto_tag);
@@ -411,7 +413,7 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 	count = (packet + len - data_start);
 	memcpy(up + 1, data_start, count);
 
-	up->uh.u_conv = conn->s.th_dport;
+	up->uh.u_conv = conn->s.ip_src.s_addr;
 	conn->s.ttl ++;
 
 	return sizeof(*up) + count + sizeof(_proto_tag);
@@ -503,7 +505,7 @@ ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 
 	up = (struct udpuphdr4 *)(((uint8_t *)packet) + sizeof(_proto_tag));
 	LIST_FOREACH(item, &_ipv4_header, entry) {
-		if (item->s.th_dport != up->uh.u_conv) {
+		if (item->s.ip_src.s_addr != up->uh.u_conv) {
 			continue;
 		}
 
@@ -513,7 +515,7 @@ ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 	}
 
 	LIST_FOREACH(item, &_ipv6_header, entry) {
-		if (item->s.th_dport != up->uh.u_conv) {
+		if (item->s.ip_src.s_addr != up->uh.u_conv) {
 			continue;
 		}
 
