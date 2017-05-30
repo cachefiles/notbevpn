@@ -189,8 +189,8 @@ free_conn:
 			}
 
 			int timeout = 30;
-			if (item->c.ttl > 10) timeout += 60;
-			if (item->s.ttl > 10) timeout += 60;
+			if (item->c.ttl > 3) timeout += 150;
+			if (item->s.ttl > 3) timeout += 150;
 
 			if ((item->last_alive > now) ||
 					(item->last_alive + timeout < now)) {
