@@ -107,7 +107,6 @@ static void alloc_nat_slot(udp_state_t *s, udp_state_t *c, uint16_t port)
 }
 
 typedef struct _nat_conntrack_t {
-	int is_ipv6;
 	int last_meta;
 	time_t last_alive;
 
@@ -251,12 +250,12 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 	nat_conntrack_t *item;
 
 	ip = (nat_ip6hdr_t *)packet;
-	LIST_FOREACH(item, &_ipv4_header, entry) {
+	LIST_FOREACH(item, &_ipv6_header, entry) {
 		if (item->c.th_sport != sport) {
 			continue;
 		}
 
-		if (0 == memcmp(&item->c.ip_src, &ip->ip6_src, sizeof(ip->ip6_src))) {
+		if (0 == memcmp(&item->c.ip6_src, &ip->ip6_src, sizeof(ip->ip6_src))) {
 			item->last_alive = time(NULL);
 			return item;
 		}
