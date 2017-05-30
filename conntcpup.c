@@ -129,6 +129,7 @@ static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, uint16_t port)
 #define DIRECT_SERVER_TO_CLIENT 0x02
 
 typedef struct _nat_conntrack_t {
+	int probe;
 	int last_dir;
 	int tcp_wscale;
 	time_t last_alive;
@@ -890,6 +891,7 @@ found:
 			tuh->th_seq = htonl(ntohl(tuh->th_seq) -1);
 			log_verbose("tcpup_track_stage2: %ld, %p, %x %x %s\n",
 					_tcpup_len, full_item, full_item->c.flags, full_item->s.flags & TH_FIN, inet_ntoa(full_item->c.ip_dst));
+			full_item->probe++;
 			return 1;
 		}
 

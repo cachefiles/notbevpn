@@ -103,7 +103,6 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 	memcpy(&key, &packet[14], sizeof(key));
 	packet_decrypt(htons(key), buf, packet + sizeof(*hdr), count);
 
-	// fprintf(stderr, "low_link_recv_data: %d\n", count);
 	return count;
 }
 
@@ -129,7 +128,6 @@ int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struct socka
 	hdr->checksum = 0;
 	hdr->checksum = ip_checksum(_crypt_stream, len + sizeof(*hdr));
 
-	// fprintf(stderr, "low_link_send_data: %ld\n", len);
 	return sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, ll_addr, ll_len);
 }
 
@@ -350,6 +348,7 @@ static int udp_low_link_create(void)
 {
 	int devfd = socket(AF_INET, SOCK_DGRAM, 0);
 
+	fprintf(stderr, "UDP created\n");
 	TUNNEL_PADDIND_DNS[2] &= ~0x80;
 	TUNNEL_PADDIND_DNS[3] &= ~0x80;
 	return devfd;
@@ -369,6 +368,7 @@ static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct socka
 	if (count <= sizeof(TUNNEL_PADDIND_DNS)) return -1;
 	count -= sizeof(TUNNEL_PADDIND_DNS);
 
+	// fprintf(stderr, "recv: %d\n", count + LEN_PADDING_DNS);
 	memcpy(&key, &packet[14], sizeof(key));
 	packet_decrypt(htons(key), buf, packet + sizeof(TUNNEL_PADDIND_DNS), count);
 
@@ -380,6 +380,7 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 	unsigned short key = rand();
 	uint8_t _crypt_stream[1500];
 
+	memcpy(_crypt_stream, TUNNEL_PADDIND_DNS, sizeof(TUNNEL_PADDIND_DNS));
 	memcpy(_crypt_stream + 14, &key, 2);
 	packet_encrypt(htons(key), _crypt_stream + sizeof(TUNNEL_PADDIND_DNS), buf, len);
 	return sendto(devfd, _crypt_stream, len + sizeof(TUNNEL_PADDIND_DNS), 0, ll_addr, ll_len);
@@ -387,7 +388,8 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 
 static int udp_low_link_adjust(void)
 {
-	return LEN_PADDING_DNS;
+	/* sizeof(struct udphdr) == 8 */
+	return LEN_PADDING_DNS + 8;
 }
 
 static struct low_link_ops udp_ops = {
