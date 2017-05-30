@@ -77,7 +77,7 @@ int packet_encrypt(unsigned short key, void *dst, const void *src, size_t len)
 
 static int IPHDR_SKIP_LEN = 0;
 
-int low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *ll_addr, socklen_t *ll_len)
+int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *ll_addr, socklen_t *ll_len)
 {
 	struct icmphdr *hdr;
 	unsigned short key = 0;
@@ -109,7 +109,7 @@ int low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *ll_add
 
 int ip_checksum(void *buf, size_t len);
 
-int low_link_send_data(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len)
+int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len)
 {
 	unsigned short key = rand();
 	struct icmphdr *hdr = NULL;
@@ -284,7 +284,7 @@ cleanup:
 
 #define LEN_PADDING_ICMP sizeof(struct icmphdr)
 
-int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote)
+int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjust)
 {
 	int err = 0;
 	int mtu = 1500;
@@ -298,10 +298,104 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote)
 		close(udpfd);
 	}
 
-	set_tcp_mss_by_mtu(mtu - 20 - LEN_PADDING_ICMP);
-
+	set_tcp_mss_by_mtu(mtu - 20 - adjust);
 	return 0;
 }
+
+struct low_link_ops {
+	int (*create)(void);
+	int (*get_adjust)(void);
+	int (*send_data)(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len);
+	int (*recv_data)(int devfd, void *buf, size_t len, struct sockaddr *ll_addr, socklen_t *ll_len);
+};
+
+static int icmp_low_link_create(void)
+{
+	int devfd;
+
+#ifdef __linux__
+	devfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+#else
+	devfd = -1;
+#endif
+	if (devfd == -1) {
+		devfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+		IPHDR_SKIP_LEN = 20;
+	}
+
+	return devfd;
+}
+
+static int icmp_low_link_adjust(void)
+{
+	return LEN_PADDING_ICMP;
+}
+
+static struct low_link_ops icmp_ops = {
+	.create = icmp_low_link_create,
+	.get_adjust = icmp_low_link_adjust,
+	.send_data = icmp_low_link_send_data,
+	.recv_data = icmp_low_link_recv_data
+};
+
+static unsigned char TUNNEL_PADDIND_DNS[] = {
+	0x20, 0x88, 0x81, 0x80, 0x00, 0x01, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x04, 0x77, 0x77, 0x77,
+	0x77, 0x00, 0x00, 0x01, 0x00, 0x01
+};
+
+#define LEN_PADDING_DNS sizeof(TUNNEL_PADDIND_DNS)
+
+static int udp_low_link_create(void)
+{
+	int devfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	TUNNEL_PADDIND_DNS[2] &= ~0x80;
+	TUNNEL_PADDIND_DNS[3] &= ~0x80;
+	return devfd;
+}
+
+static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *ll_addr, socklen_t *ll_len)
+{
+	unsigned short key = 0;
+	char _plain_stream[1500], *packet;
+
+	int count = recvfrom(devfd, _plain_stream, sizeof(_plain_stream), MSG_DONTWAIT, ll_addr, ll_len);
+
+	if (count <= 0) return count;
+
+	packet = _plain_stream;
+
+	if (count <= sizeof(TUNNEL_PADDIND_DNS)) return -1;
+	count -= sizeof(TUNNEL_PADDIND_DNS);
+
+	memcpy(&key, &packet[14], sizeof(key));
+	packet_decrypt(htons(key), buf, packet + sizeof(TUNNEL_PADDIND_DNS), count);
+
+	return count;
+}
+
+static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len)
+{
+	unsigned short key = rand();
+	uint8_t _crypt_stream[1500];
+
+	memcpy(_crypt_stream + 14, &key, 2);
+	packet_encrypt(htons(key), _crypt_stream + sizeof(TUNNEL_PADDIND_DNS), buf, len);
+	return sendto(devfd, _crypt_stream, len + sizeof(TUNNEL_PADDIND_DNS), 0, ll_addr, ll_len);
+}
+
+static int udp_low_link_adjust(void)
+{
+	return LEN_PADDING_DNS;
+}
+
+static struct low_link_ops udp_ops = {
+	.create = udp_low_link_create,
+	.get_adjust = udp_low_link_adjust,
+	.send_data = udp_low_link_send_data,
+	.recv_data = udp_low_link_recv_data
+};
 
 int main(int argc, char *argv[])
 {
@@ -314,6 +408,7 @@ int main(int argc, char *argv[])
 	int devfd, error, have_target = 0;
 	struct sockaddr_in ll_addr = {};
 	struct sockaddr_in so_addr = {};
+	struct low_link_ops *link_ops = &icmp_ops;
 
 	so_addr.sin_family = AF_INET;
 	so_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -346,7 +441,7 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	update_tcp_mss((struct sockaddr *)&so_addr, (struct sockaddr *)&ll_addr);
+	update_tcp_mss((struct sockaddr *)&so_addr, (struct sockaddr *)&ll_addr, (*link_ops->get_adjust)());
 
 	tun = vpn_tun_alloc(tun_name);
 	if (tun == -1) {
@@ -358,15 +453,11 @@ int main(int argc, char *argv[])
 	setuid(0);
 	run_config_script(tun_name, script, inet_ntoa(ll_addr.sin_addr));
 
-#ifdef __linux__
-	devfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
-#else
-	devfd = -1;
-#endif
-	if (devfd == -1) {
-		devfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-		IPHDR_SKIP_LEN = 20;
+	if (ll_addr.sin_port != 0) {
+		link_ops = &udp_ops;
 	}
+
+	devfd = (*link_ops->create)();
 
 	assert(devfd != -1);
 	int bufsiz = 384 * 1024;
@@ -399,7 +490,7 @@ int main(int argc, char *argv[])
 				tcpup_track_stage2() &&
 				(packet = get_tcpup_data(&len)) != NULL) {
 			fprintf(stderr, "send probe data: %d\n", len);
-			low_link_send_data(devfd, packet, len, (struct sockaddr *)&so_addr, sizeof(so_addr));
+			(*link_ops->send_data)(devfd, packet, len, (struct sockaddr *)&so_addr, sizeof(so_addr));
 			last_track_enable = 0;
 		}
 
@@ -424,9 +515,9 @@ int main(int argc, char *argv[])
 			int bufsize = 1500;
 			socklen_t ll_len = sizeof(ll_addr);
 			assert(bufsize + 60 < sizeof(buf));
-			len = low_link_recv_data(devfd, packet, bufsize, (struct sockaddr *)&ll_addr, &ll_len); 
+			len = (*link_ops->recv_data)(devfd, packet, bufsize, (struct sockaddr *)&ll_addr, &ll_len); 
 			if ((len > 0) && (len = tcpup_frag_input(packet, len, 1500)) > 0) {
-				low_link_send_data(devfd, packet, len, (struct sockaddr *)&ll_addr, ll_len);
+				(*link_ops->send_data)(devfd, packet, len, (struct sockaddr *)&ll_addr, ll_len);
 			}
 		}
 
@@ -452,7 +543,7 @@ int main(int argc, char *argv[])
 
 		packet = get_tcpup_data(&len);
 		if (packet != NULL) {
-			low_link_send_data(devfd, packet, len, (struct sockaddr *)&so_addr, sizeof(so_addr));
+			(*link_ops->send_data)(devfd, packet, len, (struct sockaddr *)&so_addr, sizeof(so_addr));
 			last_track_enable = 1;
 		}
 	}
