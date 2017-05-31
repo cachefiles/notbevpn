@@ -133,6 +133,8 @@ typedef struct _nat_conntrack_t {
 	int last_dir;
 	int tcp_wscale;
 	time_t last_alive;
+	time_t last_sent;
+	time_t last_recv;
 	void *ops;
 
 	int track_len;
@@ -171,6 +173,7 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 		if (item->c.ip_src.s_addr == ip->ip_src.s_addr &&
 				item->c.ip_dst.s_addr == ip->ip_dst.s_addr) {
 			item->last_alive = time(NULL);
+			item->last_sent = time(NULL);
 			return item;
 		}
 	}
@@ -196,7 +199,7 @@ static int establish_timeout(int live_count)
 		return 600;
 	}
 
-	return 120;
+	return 300;
 }
 
 static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t dport)
@@ -218,6 +221,7 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 		ip = (nat_iphdr_t *)packet;
 
 		conn->last_alive = now;
+		conn->last_sent  = now;
 		conn->c.th_sport = sport;
 		conn->c.th_dport = dport;
 
@@ -323,6 +327,7 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 		if (0 == memcmp(&item->c.ip6_src, &ip->ip6_src, sizeof(ip->ip6_src)) &&
 				0 == memcmp(&item->c.ip6_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
 			item->last_alive = time(NULL);
+			item->last_sent  = time(NULL);
 			return item;
 		}
 	}
@@ -348,6 +353,7 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 		ip = (nat_ip6hdr_t *)packet;
 
 		conn->last_alive = now;
+		conn->last_sent  = now;
 		conn->c.th_sport = sport;
 		conn->c.th_dport = dport;
 
@@ -691,6 +697,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 		}
 
 		item->last_alive = time(NULL);
+		item->last_recv  = item->last_alive;
 		conn = item;
 		goto found;
 	}
@@ -701,6 +708,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 		}
 
 		item->last_alive = time(NULL);
+		item->last_recv  = item->last_alive;
 		conn = item;
 		goto found;
 	}
@@ -785,7 +793,7 @@ static int _need_track = 0;
 static int _last_track_round = 0;
 static time_t _last_track_time = 0;
 
-static int is_stale(nat_conntrack_t *item, time_t now)
+static int is_stall(nat_conntrack_t *item, time_t now)
 {
 	int limit = 120;
 
@@ -796,6 +804,10 @@ static int is_stale(nat_conntrack_t *item, time_t now)
 
 	if ((item->c.flags & TH_FIN)) {
 		limit = 30;
+	}
+
+	if (item->last_sent + limit < now) {
+		return 0;
 	}
 
 	if (item->last_alive + 2 < now &&
@@ -817,7 +829,7 @@ int tcpup_track_stage1()
 
 	_need_track = 0;
 	LIST_FOREACH(item, &_ipv4_header, entry) {
-		if (is_stale(item, now)) {
+		if (is_stall(item, now)) {
 			log_verbose("tcpup_track_stage1: %d/%d %d/%d\n",
 					item->c.byte_sent, item->c.pkt_sent,
 					item->s.byte_sent, item->s.pkt_sent);
@@ -827,7 +839,7 @@ int tcpup_track_stage1()
 	}
 
 	LIST_FOREACH(item, &_ipv6_header, entry) {
-		if (is_stale(item, now)) {
+		if (is_stall(item, now)) {
 			log_verbose("tcpup_track_stage1: %d/%d %d/%d\n",
 					item->c.byte_sent, item->c.pkt_sent,
 					item->s.byte_sent, item->s.pkt_sent);
@@ -849,7 +861,7 @@ int tcpup_track_stage2()
 		nat_conntrack_t *full_item = NULL;
 
 		LIST_FOREACH(item, &_ipv4_header, entry) {
-			if (is_stale(item, now)) {
+			if (is_stall(item, now)) {
 				if (item->track_round != _last_track_round) {
 					full_item = item;
 					goto found;
@@ -860,7 +872,7 @@ int tcpup_track_stage2()
 		}
 
 		LIST_FOREACH(item, &_ipv6_header, entry) {
-			if (is_stale(item, now)) {
+			if (is_stall(item, now)) {
 				if (item->track_round != _last_track_round) {
 					full_item = item;
 					goto found;
