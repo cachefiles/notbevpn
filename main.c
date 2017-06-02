@@ -137,6 +137,7 @@ static void usage(const char *prog_name)
 {
 	fprintf(stderr, "%s [options] <server>!\n", prog_name);
 	fprintf(stderr, "\t-h print this help!\n");
+	fprintf(stderr, "\t-p <proto> select low link layer support, icmp/udp/tcp\n");
 	fprintf(stderr, "\t-t <tun-device> use this as tun device name, default tun0!\n");
 	fprintf(stderr, "\t-s <config-script> the path to config this interface when tun is up, default ./ifup.tun0!\n");
 	fprintf(stderr, "\t-i <interface-address> interface address, local address use for outgoing/incoming packet!\n");
@@ -399,10 +400,44 @@ static struct low_link_ops udp_ops = {
 	.recv_data = udp_low_link_recv_data
 };
 
+ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit);
+void tcp_nat_init(struct sockaddr_in *ifaddr, struct sockaddr_in *target);
+
+static int run_tun2socks(int tun, struct sockaddr_in *from, struct sockaddr_in *target)
+{
+	int len;
+	char buf[2048];
+
+	tcp_nat_init(from, target);
+	for (; ; ) {
+		char *packet = (buf + 60);
+		len = tun_read(tun, packet, 1500);
+		if (len < 0) {
+			fprintf(stderr, "read tun failure\n");
+			break;
+		}
+
+		len = tcp_frag_nat(packet, len, 1500);
+		if (len <= 0) {
+			fprintf(stderr, "nat failure\n");
+			continue;
+		}
+
+		len = tun_write(tun, packet, len);
+		if (len <= 0) {
+			fprintf(stderr, "write tun failure: %d\n", errno);
+			continue;
+		}
+	}
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	int i;
 	int tun, len;
+	const char *proto = "icmp";
 	const char *script = NULL;
 	const char *tun_name = DEFAULT_TUN_NAME;
 	char buf[2048];
@@ -425,6 +460,9 @@ int main(int argc, char *argv[])
 		} else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
 			script = argv[i + 1];
 			i++;
+		} else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+			proto = argv[i + 1];
+			i++;
 		} else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
 			tun_name = argv[i + 1];
 			i++;
@@ -443,8 +481,6 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	update_tcp_mss((struct sockaddr *)&so_addr, (struct sockaddr *)&ll_addr, (*link_ops->get_adjust)());
-
 	tun = vpn_tun_alloc(tun_name);
 	if (tun == -1) {
 		perror("vpn_tun_alloc: ");
@@ -455,10 +491,18 @@ int main(int argc, char *argv[])
 	setuid(0);
 	run_config_script(tun_name, script, inet_ntoa(ll_addr.sin_addr));
 
-	if (ll_addr.sin_port != 0) {
+	if (0 == strcmp(proto, "tcp")) {
+		return run_tun2socks(tun, &so_addr, &ll_addr);
+	} else if (0 == strcmp(proto, "udp")) {
 		link_ops = &udp_ops;
+	} else if (0 == strcmp(proto, "icmp")) {
+		link_ops = &icmp_ops;
+	} else {
+		usage(argv[0]);
+		exit(0);
 	}
 
+	update_tcp_mss((struct sockaddr *)&so_addr, (struct sockaddr *)&ll_addr, (*link_ops->get_adjust)());
 	devfd = (*link_ops->create)();
 
 	assert(devfd != -1);
