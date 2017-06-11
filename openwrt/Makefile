@@ -24,7 +24,6 @@ define Package/toyclient
 	TITLE := toyclient -- do dns smart forward
 	SECTION := utils
 	CATEGORY := Utilities
-	DEPENDS := +libstdcpp +librt
 endef
 
 # Uncomment portion below for Kamikaze and delete DESCRIPTION variable above

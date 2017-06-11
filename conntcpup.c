@@ -512,10 +512,10 @@ ssize_t tcpup_frag_rst(struct tcpuphdr *th, uint8_t *packet)
 	return sizeof(*th);
 }
 
-static char _pkt_buf[1500];
+static char _pkt_buf[2048];
 static size_t _tcpup_len = 0;
 
-static char _tcp_buf[1500];
+static char _tcp_buf[2048];
 static size_t _tcpip_len = 0;
 
 void * get_tcpup_data(int *len)
@@ -596,8 +596,9 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	data_start = ((uint8_t *)th) + (th->th_off << 2);
 	count = ((packet + len) - data_start);
 
-	memcpy(((u_char *)(up + 1)) + offset, data_start, count);
 	_tcpup_len = sizeof(*up) + offset + count;
+	assert(_tcpup_len < sizeof(_pkt_buf));
+	memcpy(((u_char *)(up + 1)) + offset, data_start, count);
 
 	up->th_conv = conn->s.ip_src.s_addr;
 	if (count > 0 || CHECK_FLAGS(up->th_flags, TH_SYN| TH_FIN| TH_RST)) {
@@ -660,6 +661,9 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 
 	data_start = ((uint8_t *)(up + 1)) + (up->th_opten << 2);
 	count = ((packet + len) - data_start);
+	_tcpip_len = sizeof(*th) + (*ops->get_hdr_len)() + offset + count;
+
+	assert(_tcpip_len < sizeof(_tcp_buf));
 	memcpy(((u_char *)(th + 1)) + offset, data_start, count);
 
 	assert (ops == conn->ops);
@@ -676,7 +680,6 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 		conn->last_dir = 0;
 	}
 
-	_tcpip_len = sizeof(*th) + (*ops->get_hdr_len)() + offset + count;
 	return 0;
 }
 

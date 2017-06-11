@@ -364,6 +364,7 @@ static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *
 	struct udpuphdr4 *up = (struct udpuphdr4 *)(buf + sizeof(_proto_tag));
 
 	_proto_tag[0] = htonl(TCPUP_PROTO_UDP);
+	assert(limit > sizeof(*up) + sizeof(_proto_tag));
 	memcpy(buf, _proto_tag, sizeof(_proto_tag));
 
 	up->uh.u_conv = 0xf6e7d8c9;
@@ -379,6 +380,7 @@ static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *
 	
 	data_start = (uint8_t *)(uh + 1);
 	count = (packet + len - data_start);
+	assert(limit > sizeof(*uh) + sizeof(_proto_tag) + count);
 	memcpy(up + 1, data_start, count);
 
 	up->uh.u_conv = conn->s.ip_src.s_addr;
@@ -395,6 +397,7 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 	int count, offset;
 	struct udpuphdr6 *up = (struct udpuphdr6 *)(buf + sizeof(_proto_tag));
 
+	assert(limit > sizeof(*up) + sizeof(_proto_tag));
 	_proto_tag[0] = htonl(TCPUP_PROTO_UDP);
 	memcpy(buf, _proto_tag, sizeof(_proto_tag));
 
@@ -411,6 +414,7 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 	
 	data_start = (uint8_t *)(uh + 1);
 	count = (packet + len - data_start);
+	assert(limit > sizeof(*up) + sizeof(_proto_tag) + count);
 	memcpy(up + 1, data_start, count);
 
 	up->uh.u_conv = conn->s.ip_src.s_addr;
