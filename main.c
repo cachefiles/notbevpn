@@ -16,6 +16,8 @@
 #include <sys/select.h>
 
 #define SOT(addr) (struct sockaddr *)addr
+#define MAX_PACKET_SIZE 2048
+#define MIN(a, b) ((a) < (b)? (a): (b))
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
@@ -84,7 +86,7 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 {
 	struct icmphdr *hdr;
 	unsigned short key = 0;
-	char _plain_stream[1500], *packet;
+	char _plain_stream[2048], *packet;
 
 	int count = recvfrom(devfd, _plain_stream, sizeof(_plain_stream), MSG_DONTWAIT, ll_addr, ll_len);
 
@@ -104,6 +106,7 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 	if (hdr->code == 0x08) return -1;
 
 	memcpy(&key, &packet[14], sizeof(key));
+	count = MIN(count, len);
 	packet_decrypt(htons(key), buf, packet + sizeof(*hdr), count);
 
 	return count;
@@ -116,7 +119,7 @@ int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struct socka
 	unsigned short key = rand();
 	struct icmphdr *hdr = NULL;
 
-	uint8_t _crypt_stream[1500];
+	uint8_t _crypt_stream[MAX_PACKET_SIZE];
 
 	hdr = (struct icmphdr *)_crypt_stream;
 	hdr->type = 0x08; // icmp echo request
@@ -126,6 +129,7 @@ int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struct socka
 	hdr->reserved[1] = ICMP_CLIENT_FILL;
 
 	memcpy(_crypt_stream + 14, &key, 2);
+	assert (len + sizeof(*hdr) < sizeof(_crypt_stream));
 	packet_encrypt(htons(key), _crypt_stream + sizeof(*hdr), buf, len);
 
 	hdr->checksum = 0;
@@ -370,7 +374,7 @@ static int udp_low_link_create(void)
 static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *ll_addr, socklen_t *ll_len)
 {
 	unsigned short key = 0;
-	char _plain_stream[1500], *packet;
+	char _plain_stream[MAX_PACKET_SIZE], *packet;
 
 	int count = recvfrom(devfd, _plain_stream, sizeof(_plain_stream), MSG_DONTWAIT, ll_addr, ll_len);
 
@@ -383,6 +387,7 @@ static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct socka
 
 	// fprintf(stderr, "recv: %d\n", count + LEN_PADDING_DNS);
 	memcpy(&key, &packet[14], sizeof(key));
+	count = MIN(count, len);
 	packet_decrypt(htons(key), buf, packet + sizeof(TUNNEL_PADDIND_DNS), count);
 
 	return count;
@@ -391,8 +396,9 @@ static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct socka
 static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len)
 {
 	unsigned short key = rand();
-	uint8_t _crypt_stream[1500];
+	uint8_t _crypt_stream[MAX_PACKET_SIZE];
 
+	assert (len + sizeof(TUNNEL_PADDIND_DNS) < sizeof(_crypt_stream));
 	memcpy(_crypt_stream, TUNNEL_PADDIND_DNS, sizeof(TUNNEL_PADDIND_DNS));
 	memcpy(_crypt_stream + 14, &key, 2);
 	packet_encrypt(htons(key), _crypt_stream + sizeof(TUNNEL_PADDIND_DNS), buf, len);
@@ -418,7 +424,7 @@ void tcp_nat_init(struct sockaddr_in *ifaddr, struct sockaddr_in *target);
 static int run_tun2socks(int tun, struct sockaddr_in *from, struct sockaddr_in *target)
 {
 	int len;
-	char buf[2048];
+	char buf[MAX_PACKET_SIZE];
 
 	tcp_nat_init(from, target);
 	for (; ; ) {
@@ -459,7 +465,7 @@ int main(int argc, char *argv[])
 	const char *proto = "icmp";
 	const char *script = NULL;
 	const char *tun_name = DEFAULT_TUN_NAME;
-	char buf[2048];
+	char buf[MAX_PACKET_SIZE];
 
 	int devfd, error, have_target = 0;
 	struct sockaddr_in ll_addr = {};
