@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
 
 #ifdef __linux__
 #define __BSD_VISIBLE 1

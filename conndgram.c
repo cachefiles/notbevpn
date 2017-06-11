@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
 
 #ifdef __linux__
 #define __BSD_VISIBLE 1
