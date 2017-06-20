@@ -361,7 +361,7 @@ static int udp_low_link_create(void)
 
 	devfd = socket(AF_INET, SOCK_DGRAM, 0);
 
-	fprintf(stderr, "UDP created\n");
+	fprintf(stderr, "UDP created: %d\n", devfd);
 	TUNNEL_PADDIND_DNS[2] &= ~0x80;
 	TUNNEL_PADDIND_DNS[3] &= ~0x80;
 
@@ -470,6 +470,7 @@ int main(int argc, char *argv[])
 	int devfd, error, have_target = 0;
 	struct sockaddr_in ll_addr = {};
 	struct sockaddr_in so_addr = {};
+	struct sockaddr_in tmp_addr = {};
 	struct low_link_ops *link_ops = &icmp_ops;
 
 	so_addr.sin_family = AF_INET;
@@ -535,7 +536,6 @@ int main(int argc, char *argv[])
 	error = bind(devfd, SOT(&so_addr), sizeof(so_addr));
 	assert(error == 0);
 
-	so_addr = ll_addr;
 	int last_track_count = 0;
 	int last_track_enable = 0;
 	time_t last_track_time = time(NULL);
@@ -559,7 +559,7 @@ int main(int argc, char *argv[])
 				tcpup_track_stage2() &&
 				(packet = get_tcpup_data(&len)) != NULL) {
 			fprintf(stderr, "send probe data: %d\n", len);
-			(*link_ops->send_data)(devfd, packet, len, SOT(&so_addr), sizeof(so_addr));
+			(*link_ops->send_data)(devfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
 			last_track_enable = 0;
 		}
 
@@ -584,6 +584,10 @@ int main(int argc, char *argv[])
 						close(devfd);
 						devfd = newfd;
 						_reload = 0;
+					} else {
+						perror("rebind");
+						fprintf(stderr, "bindto: %s:%d\n", inet_ntoa(so_addr.sin_addr), htons(so_addr.sin_port));
+						fprintf(stderr, "family: %d %d\n", so_addr.sin_family, newfd);
 					}
 				}
 				continue;
@@ -593,11 +597,11 @@ int main(int argc, char *argv[])
 		packet = (buf + 60);
 		if (FD_ISSET(devfd, &readfds)) {
 			int bufsize = 1500;
-			socklen_t ll_len = sizeof(ll_addr);
+			socklen_t tmp_alen = sizeof(tmp_addr);
 			assert(bufsize + 60 < sizeof(buf));
-			len = (*link_ops->recv_data)(devfd, packet, bufsize, SOT(&ll_addr), &ll_len); 
+			len = (*link_ops->recv_data)(devfd, packet, bufsize, SOT(&tmp_addr), &tmp_alen); 
 			if ((len > 0) && (len = tcpup_frag_input(packet, len, 1500)) > 0) {
-				(*link_ops->send_data)(devfd, packet, len, SOT(&ll_addr), ll_len);
+				(*link_ops->send_data)(devfd, packet, len, SOT(&tmp_addr), tmp_alen);
 			}
 		}
 
@@ -623,7 +627,7 @@ int main(int argc, char *argv[])
 
 		packet = get_tcpup_data(&len);
 		if (packet != NULL) {
-			(*link_ops->send_data)(devfd, packet, len, SOT(&so_addr), sizeof(so_addr));
+			(*link_ops->send_data)(devfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
 			last_track_enable = 1;
 		}
 	}
