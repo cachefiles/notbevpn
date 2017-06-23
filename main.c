@@ -462,6 +462,7 @@ int main(int argc, char *argv[])
 {
 	int i;
 	int tun, len;
+	int new_dev_mtu = -1;
 	const char *proto = "icmp";
 	const char *script = NULL;
 	const char *tun_name = DEFAULT_TUN_NAME;
@@ -481,7 +482,7 @@ int main(int argc, char *argv[])
 			return 0;
 		} else if (strcmp(argv[i], "-mtu") == 0 && i + 1 < argc) {
 			int mtu = atoi(argv[i + 1]);
-			if (mtu > 0 && mtu < 1500) set_tcp_mss_by_mtu(mtu - 20 - sizeof(struct icmphdr));
+			if (mtu > 0 && mtu < 1500) new_dev_mtu = mtu;
 			i++;
 		} else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
 			script = argv[i + 1];
@@ -529,6 +530,11 @@ int main(int argc, char *argv[])
 	}
 
 	update_tcp_mss((struct sockaddr *)&so_addr, SOT(&ll_addr), (*link_ops->get_adjust)());
+	if (new_dev_mtu != -1) {
+		set_tcp_mss_by_mtu(new_dev_mtu - 20 - link_ops->get_adjust());
+		fprintf(stderr, "update mtu to: %d\n", new_dev_mtu);
+	}
+
 	devfd = (*link_ops->create)();
 	assert(devfd != -1);
 
