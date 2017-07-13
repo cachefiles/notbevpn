@@ -18,6 +18,10 @@
 #define SOT(addr) (struct sockaddr *)addr
 #define MAX_PACKET_SIZE 2048
 #define MIN(a, b) ((a) < (b)? (a): (b))
+#define MAX(a, b) ((a) < (b)? (b): (a))
+
+#define LOG_DEBUG(fmt, args...)   fprintf(stderr, fmt, ##args)
+#define LOG_VERBOSE(fmt, args...) 
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
@@ -109,6 +113,7 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 	count = MIN(count, len);
 	packet_decrypt(htons(key), buf, packet + sizeof(*hdr), count);
 
+	LOG_VERBOSE("icmp_low_link_recv_data: %d\n", count);
 	return count;
 }
 
@@ -175,7 +180,7 @@ int parse_sockaddr_in(struct sockaddr_in *info, const char *address)
         else if (*last == ':') flags |= FLAG_HAVE_SPLIT;
         else if (*last == '.') flags |= FLAG_HAVE_DOT;
         else if (isalpha(*last)) flags |= FLAG_HAVE_ALPHA;
-        else { fprintf(stderr, "get target address failure!\n"); return -1;}
+        else { LOG_DEBUG("get target address failure!\n"); return -1;}
     }
 
 
@@ -361,7 +366,7 @@ static int udp_low_link_create(void)
 
 	devfd = socket(AF_INET, SOCK_DGRAM, 0);
 
-	fprintf(stderr, "UDP created: %d\n", devfd);
+	LOG_DEBUG("UDP created: %d\n", devfd);
 	TUNNEL_PADDIND_DNS[2] &= ~0x80;
 	TUNNEL_PADDIND_DNS[3] &= ~0x80;
 
@@ -385,7 +390,7 @@ static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct socka
 	if (count <= sizeof(TUNNEL_PADDIND_DNS)) return -1;
 	count -= sizeof(TUNNEL_PADDIND_DNS);
 
-	// fprintf(stderr, "recv: %d\n", count + LEN_PADDING_DNS);
+	LOG_VERBOSE("recv: %ld\n", count + LEN_PADDING_DNS);
 	memcpy(&key, &packet[14], sizeof(key));
 	count = MIN(count, len);
 	packet_decrypt(htons(key), buf, packet + sizeof(TUNNEL_PADDIND_DNS), count);
@@ -431,19 +436,19 @@ static int run_tun2socks(int tun, struct sockaddr_in *from, struct sockaddr_in *
 		char *packet = (buf + 60);
 		len = tun_read(tun, packet, 1500);
 		if (len < 0) {
-			fprintf(stderr, "read tun failure\n");
+			LOG_DEBUG("read tun failure\n");
 			break;
 		}
 
 		len = tcp_frag_nat(packet, len, 1500);
 		if (len <= 0) {
-			fprintf(stderr, "nat failure\n");
+			LOG_DEBUG("nat failure\n");
 			continue;
 		}
 
 		len = tun_write(tun, packet, len);
 		if (len <= 0) {
-			fprintf(stderr, "write tun failure: %d\n", errno);
+			LOG_DEBUG("write tun failure: %d\n", errno);
 			continue;
 		}
 	}
@@ -461,14 +466,14 @@ static void handle_reload(int sig)
 int main(int argc, char *argv[])
 {
 	int i;
-	int tun, len;
+	int tunfd, len;
 	int new_dev_mtu = -1;
 	const char *proto = "icmp";
 	const char *script = NULL;
 	const char *tun_name = DEFAULT_TUN_NAME;
 	char buf[MAX_PACKET_SIZE];
 
-	int devfd, error, have_target = 0;
+	int netfd, error, have_target = 0;
 	struct sockaddr_in ll_addr = {};
 	struct sockaddr_in so_addr = {};
 	struct sockaddr_in tmp_addr = {};
@@ -508,8 +513,8 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	tun = vpn_tun_alloc(tun_name);
-	if (tun == -1) {
+	tunfd = vpn_tun_alloc(tun_name);
+	if (tunfd == -1) {
 		perror("vpn_tun_alloc: ");
 		return -1;
 	}
@@ -519,7 +524,7 @@ int main(int argc, char *argv[])
 	run_config_script(tun_name, script, inet_ntoa(ll_addr.sin_addr));
 
 	if (0 == strcmp(proto, "tcp")) {
-		return run_tun2socks(tun, &so_addr, &ll_addr);
+		return run_tun2socks(tunfd, &so_addr, &ll_addr);
 	} else if (0 == strcmp(proto, "udp")) {
 		link_ops = &udp_ops;
 	} else if (0 == strcmp(proto, "icmp")) {
@@ -532,14 +537,14 @@ int main(int argc, char *argv[])
 	update_tcp_mss((struct sockaddr *)&so_addr, SOT(&ll_addr), (*link_ops->get_adjust)());
 	if (new_dev_mtu != -1) {
 		set_tcp_mss_by_mtu(new_dev_mtu - 20 - link_ops->get_adjust());
-		fprintf(stderr, "update mtu to: %d\n", new_dev_mtu);
+		LOG_DEBUG("update mtu to: %d\n", new_dev_mtu);
 	}
 
-	devfd = (*link_ops->create)();
-	assert(devfd != -1);
+	netfd = (*link_ops->create)();
+	assert(netfd != -1);
 
 	setreuid(save_uid, save_uid);
-	error = bind(devfd, SOT(&so_addr), sizeof(so_addr));
+	error = bind(netfd, SOT(&so_addr), sizeof(so_addr));
 	assert(error == 0);
 
 	int last_track_count = 0;
@@ -548,30 +553,37 @@ int main(int argc, char *argv[])
 
 	signal(SIGHUP, handle_reload);
 
+	int flags = fcntl(netfd, F_GETFL, 0);
+	fcntl(netfd, F_SETFL, flags | O_NONBLOCK);
+
+	flags = fcntl(tunfd, F_GETFL, 0);
+	fcntl(tunfd, F_SETFL, flags | O_NONBLOCK);
+
 	for ( ; ; ) {
+		int ignore;
 		int newfd, nready;
 		fd_set readfds;
 		char * packet;
 		struct timeval timeo = {};
 
 		FD_ZERO(&readfds);
-		FD_SET(tun, &readfds);
-		FD_SET(devfd, &readfds);
+		FD_SET(tunfd, &readfds);
+		FD_SET(netfd, &readfds);
 
 		timeo.tv_sec  = 1;
 		timeo.tv_usec = 0;
 
-		if (last_track_enable &&
-				tcpup_track_stage2() &&
-				(packet = get_tcpup_data(&len)) != NULL) {
-			fprintf(stderr, "send probe data: %d\n", len);
-			(*link_ops->send_data)(devfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+		if (last_track_enable && tcpup_track_stage2()) {
 			last_track_enable = 0;
+			if ((packet = get_tcpup_data(&len)) != NULL) {
+				(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+				LOG_DEBUG("send probe data: %d\n", len);
+			}
 		}
 
-		nready = select(tun < devfd? devfd +1: tun +1, &readfds, NULL, NULL, &timeo);
+		nready = select(1 + MAX(tunfd, netfd), &readfds, NULL, NULL, &timeo);
 		if (nready == -1) {
-			perror("select");
+			LOG_DEBUG("select failure");
 			if (errno == EINTR) continue;
 			break;
 		}
@@ -587,60 +599,86 @@ int main(int argc, char *argv[])
 			if (nready == 0) {
 				if (_reload && (newfd = (*link_ops->create)()) != -1) {
 					if (bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
-						close(devfd);
-						devfd = newfd;
+						close(netfd);
+						netfd = newfd;
+						flags = fcntl(netfd, F_GETFL, 0);
+						fcntl(netfd, F_SETFL, flags | O_NONBLOCK);
 						_reload = 0;
 					} else {
+						LOG_DEBUG("bindto: %s:%d\n", inet_ntoa(so_addr.sin_addr), htons(so_addr.sin_port));
+						LOG_DEBUG("family: %d %d\n", so_addr.sin_family, newfd);
 						perror("rebind");
-						fprintf(stderr, "bindto: %s:%d\n", inet_ntoa(so_addr.sin_addr), htons(so_addr.sin_port));
-						fprintf(stderr, "family: %d %d\n", so_addr.sin_family, newfd);
 					}
 				}
 				continue;
 			}
 		}
 
-		packet = (buf + 60);
-		if (FD_ISSET(devfd, &readfds)) {
-			int bufsize = 1500;
-			socklen_t tmp_alen = sizeof(tmp_addr);
-			assert(bufsize + 60 < sizeof(buf));
-			len = (*link_ops->recv_data)(devfd, packet, bufsize, SOT(&tmp_addr), &tmp_alen); 
-			if ((len > 0) && (len = tcpup_frag_input(packet, len, 1500)) > 0) {
-				(*link_ops->send_data)(devfd, packet, len, SOT(&tmp_addr), tmp_alen);
+		int test;
+		while (nready > 0) {
+			test = 0;
+			if (FD_ISSET(netfd, &readfds)) {
+				int bufsize = 1500;
+				socklen_t tmp_alen = sizeof(tmp_addr);
+
+				test++;
+				packet = (buf + 60);
+				assert(bufsize + 60 < sizeof(buf));
+				len = (*link_ops->recv_data)(netfd, packet, bufsize, SOT(&tmp_addr), &tmp_alen); 
+				if (len < 0) {
+					LOG_VERBOSE("read netfd failure\n");
+					if (errno != EAGAIN) goto clean;
+					FD_CLR(netfd, &readfds);
+					nready--;
+					continue;
+				}
+
+				if (len > 0) {
+					len = tcpup_frag_input(packet, len, 1500);
+					ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
+					LOG_VERBOSE("send_data: %d\n", ignore);
+				}
+
+				packet = get_tcpip_data(&len);
+				if (packet != NULL) {
+					len = tun_write(tunfd, packet, len);
+					LOG_VERBOSE("tun_write: %d\n", len);
+				}
 			}
-		}
 
-		packet = get_tcpip_data(&len);
-		if (packet != NULL) {
-			len = tun_write(tun, packet, len);
-		}
+			if (FD_ISSET(tunfd, &readfds)) {
+				test++;
+				packet = (buf + 60);
+				len = tun_read(tunfd, packet, 1500);
+				if (len < 0) {
+					LOG_VERBOSE("read tunfd failure\n");
+					if (errno != EAGAIN) goto clean;
+					FD_CLR(tunfd, &readfds);
+					nready--;
+					continue;
+				}
 
-		packet = (buf + 60);
-		while (FD_ISSET(tun, &readfds)) {
-			len = tun_read(tun, packet, 1500);
-			if (len < 0) {
-				fprintf(stderr, "read tun failure\n");
-				goto clean;
+				if (len > 0) {
+					len = tcpip_frag_input(packet, len, 1500);
+					ignore = (len <= 0)? 0: tun_write(tunfd, packet, len);
+					LOG_VERBOSE("tun_write: %d\n", ignore);
+				}
+
+				packet = get_tcpup_data(&len);
+				if (packet != NULL) {
+					(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+					last_track_enable = 1;
+					LOG_VERBOSE("send_data: %d\n", len);
+				}
 			}
 
-			if ((len > 0) && (len = tcpip_frag_input(packet, len, 1500)) > 0) {
-				len = tun_write(tun, packet, len);
-			}
-
-			break;
-		}
-
-		packet = get_tcpup_data(&len);
-		if (packet != NULL) {
-			(*link_ops->send_data)(devfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
-			last_track_enable = 1;
+			assert(test > 0);
 		}
 	}
 
 clean:
-	close(devfd);
-	close(tun);
+	close(netfd);
+	close(tunfd);
 
 	return 0;
 }
