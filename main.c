@@ -467,6 +467,7 @@ int main(int argc, char *argv[])
 {
 	int i;
 	int tunfd, len;
+	int busy_loop = 0;
 	int new_dev_mtu = -1;
 	const char *proto = "icmp";
 	const char *script = NULL;
@@ -559,121 +560,123 @@ int main(int argc, char *argv[])
 	flags = fcntl(tunfd, F_GETFL, 0);
 	fcntl(tunfd, F_SETFL, flags | O_NONBLOCK);
 
+	int nready = 0;
 	for ( ; ; ) {
 		int ignore;
-		int newfd, nready;
+		int newfd;
 		fd_set readfds;
 		char * packet;
 		struct timeval timeo = {};
 
-		FD_ZERO(&readfds);
-		FD_SET(tunfd, &readfds);
-		FD_SET(netfd, &readfds);
+		int bug_check = 0;
+		if (nready <= 0 || busy_loop > 1000) {
+			FD_ZERO(&readfds);
+			FD_SET(tunfd, &readfds);
+			FD_SET(netfd, &readfds);
 
-		timeo.tv_sec  = 1;
-		timeo.tv_usec = 0;
+			timeo.tv_sec  = 1;
+			timeo.tv_usec = 0;
 
-		if (last_track_enable && tcpup_track_stage2()) {
-			last_track_enable = 0;
-			if ((packet = get_tcpup_data(&len)) != NULL) {
-				(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
-				LOG_DEBUG("send probe data: %d\n", len);
-			}
-		}
-
-		nready = select(1 + MAX(tunfd, netfd), &readfds, NULL, NULL, &timeo);
-		if (nready == -1) {
-			LOG_DEBUG("select failure");
-			if (errno == EINTR) continue;
-			break;
-		}
-
-		if (nready == 0 || ++last_track_count >= 10) {
-			time_t now = time(NULL);
-			if (now < last_track_time || last_track_time + 4 < now) { 
-				tcpup_track_stage1();
-				last_track_time  = now;
-				last_track_count = 0;
-			}
-
-			if (nready == 0) {
-				if (_reload && (newfd = (*link_ops->create)()) != -1) {
-					if (bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
-						close(netfd);
-						netfd = newfd;
-						flags = fcntl(netfd, F_GETFL, 0);
-						fcntl(netfd, F_SETFL, flags | O_NONBLOCK);
-						_reload = 0;
-					} else {
-						LOG_DEBUG("bindto: %s:%d\n", inet_ntoa(so_addr.sin_addr), htons(so_addr.sin_port));
-						LOG_DEBUG("family: %d %d\n", so_addr.sin_family, newfd);
-						perror("rebind");
-					}
+			if (last_track_enable && tcpup_track_stage2()) {
+				last_track_enable = 0;
+				if ((packet = get_tcpup_data(&len)) != NULL) {
+					(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+					LOG_DEBUG("send probe data: %d\n", len);
 				}
+			}
+
+			bug_check++;
+			busy_loop = 0;
+			nready = select(1 + MAX(tunfd, netfd), &readfds, NULL, NULL, &timeo);
+			if (nready == -1) {
+				LOG_DEBUG("select failure");
+				if (errno == EINTR) continue;
+				break;
+			}
+
+			if (nready == 0 || ++last_track_count >= 10) {
+				time_t now = time(NULL);
+				if (now < last_track_time || last_track_time + 4 < now) { 
+					tcpup_track_stage1();
+					last_track_time  = now;
+					last_track_count = 0;
+				}
+
+				if (nready == 0) {
+					if (_reload && (newfd = (*link_ops->create)()) != -1) {
+						if (bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
+							close(netfd);
+							netfd = newfd;
+							flags = fcntl(netfd, F_GETFL, 0);
+							fcntl(netfd, F_SETFL, flags | O_NONBLOCK);
+							_reload = 0;
+						} else {
+							LOG_DEBUG("bindto: %s:%d\n", inet_ntoa(so_addr.sin_addr), htons(so_addr.sin_port));
+							LOG_DEBUG("family: %d %d\n", so_addr.sin_family, newfd);
+							perror("rebind");
+						}
+					}
+					continue;
+				}
+			}
+		}
+
+		if (FD_ISSET(netfd, &readfds)) {
+			int bufsize = 1500;
+			socklen_t tmp_alen = sizeof(tmp_addr);
+
+			bug_check++;
+			packet = (buf + 60);
+			assert(bufsize + 60 < sizeof(buf));
+			len = (*link_ops->recv_data)(netfd, packet, bufsize, SOT(&tmp_addr), &tmp_alen); 
+			if (len < 0) {
+				LOG_VERBOSE("read netfd failure\n");
+				if (errno != EAGAIN) goto clean;
+				FD_CLR(netfd, &readfds);
+				nready--;
 				continue;
 			}
-		}
 
-		int test;
-		while (nready > 0) {
-			test = 0;
-			if (FD_ISSET(netfd, &readfds)) {
-				int bufsize = 1500;
-				socklen_t tmp_alen = sizeof(tmp_addr);
-
-				test++;
-				packet = (buf + 60);
-				assert(bufsize + 60 < sizeof(buf));
-				len = (*link_ops->recv_data)(netfd, packet, bufsize, SOT(&tmp_addr), &tmp_alen); 
-				if (len < 0) {
-					LOG_VERBOSE("read netfd failure\n");
-					if (errno != EAGAIN) goto clean;
-					FD_CLR(netfd, &readfds);
-					nready--;
-					continue;
-				}
-
-				if (len > 0) {
-					len = tcpup_frag_input(packet, len, 1500);
-					ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
-					LOG_VERBOSE("send_data: %d\n", ignore);
-				}
-
-				packet = get_tcpip_data(&len);
-				if (packet != NULL) {
-					len = tun_write(tunfd, packet, len);
-					LOG_VERBOSE("tun_write: %d\n", len);
-				}
+			if (len > 0) {
+				len = tcpup_frag_input(packet, len, 1500);
+				ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
+				LOG_VERBOSE("send_data: %d\n", ignore);
 			}
 
-			if (FD_ISSET(tunfd, &readfds)) {
-				test++;
-				packet = (buf + 60);
-				len = tun_read(tunfd, packet, 1500);
-				if (len < 0) {
-					LOG_VERBOSE("read tunfd failure\n");
-					if (errno != EAGAIN) goto clean;
-					FD_CLR(tunfd, &readfds);
-					nready--;
-					continue;
-				}
+			packet = get_tcpip_data(&len);
+			if (packet != NULL) {
+				len = tun_write(tunfd, packet, len);
+				LOG_VERBOSE("tun_write: %d\n", len);
+			}
+		}
 
-				if (len > 0) {
-					len = tcpip_frag_input(packet, len, 1500);
-					ignore = (len <= 0)? 0: tun_write(tunfd, packet, len);
-					LOG_VERBOSE("tun_write: %d\n", ignore);
-				}
-
-				packet = get_tcpup_data(&len);
-				if (packet != NULL) {
-					(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
-					last_track_enable = 1;
-					LOG_VERBOSE("send_data: %d\n", len);
-				}
+		if (FD_ISSET(tunfd, &readfds)) {
+			bug_check++;
+			packet = (buf + 60);
+			len = tun_read(tunfd, packet, 1500);
+			if (len < 0) {
+				LOG_VERBOSE("read tunfd failure\n");
+				if (errno != EAGAIN) goto clean;
+				FD_CLR(tunfd, &readfds);
+				nready--;
+				continue;
 			}
 
-			assert(test > 0);
+			if (len > 0) {
+				len = tcpip_frag_input(packet, len, 1500);
+				ignore = (len <= 0)? 0: tun_write(tunfd, packet, len);
+				LOG_VERBOSE("tun_write: %d\n", ignore);
+			}
+
+			packet = get_tcpup_data(&len);
+			if (packet != NULL) {
+				(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+				last_track_enable = 1;
+				LOG_VERBOSE("send_data: %d\n", len);
+			}
 		}
+
+		assert(bug_check > 0);
 	}
 
 clean:

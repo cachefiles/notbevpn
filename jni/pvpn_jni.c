@@ -43,54 +43,64 @@ static int vpn_run_loop(int tunfd, int netfd)
 {
 	int len;
 	int ignore;
-	int nready;
+	int nready = 0;
+	int loop_try = 0;
 	char buf[2048];
 
 	for ( ; ; ) {
+		int test = 0;
 		fd_set readfds;
 		char * packet;
 		struct timeval timeo = {};
 
-		FD_ZERO(&readfds);
-		FD_SET(tunfd, &readfds);
-		FD_SET(netfd, &readfds);
+		loop_try++;
+		if (nready <= 0 || loop_try > 1000) {
+			FD_ZERO(&readfds);
+			FD_SET(tunfd, &readfds);
+			FD_SET(netfd, &readfds);
 
-		timeo.tv_sec  = 1;
-		timeo.tv_usec = 0;
+			timeo.tv_sec  = 1;
+			timeo.tv_usec = 0;
 
-		if (last_track_enable && tcpup_track_stage2()) {
-			last_track_enable = 0;
-			if ((packet = get_tcpup_data(&len)) != NULL) {
-				(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
-				LOG_VERBOSE("send probe data: %d\n", len);
+			if (last_track_enable && tcpup_track_stage2()) {
+				last_track_enable = 0;
+				if ((packet = get_tcpup_data(&len)) != NULL) {
+					(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+					LOG_VERBOSE("send probe data: %d\n", len);
+				}
 			}
-		}
 
-		nready = select(1 + MAX(tunfd, netfd), &readfds, NULL, NULL, &timeo);
-		if (nready == -1) {
-			LOG_VERBOSE("select failure");
-			return -1;
-		}
+			test++;
+			loop_try = 0;
+			nready = select(1 + MAX(tunfd, netfd), &readfds, NULL, NULL, &timeo);
+			if (nready == -1) {
+				LOG_VERBOSE("select failure");
+				return -1;
+			}
 
-		if (nready == 0 || ++last_track_count >= 20) {
-			time_t now = time(NULL);
-			if (now < last_track_time || last_track_time + 4 < now) {
-				tcpup_track_stage1();
-				last_track_time  = now;
-				last_track_count = 0;
+			if (nready == 0 || ++last_track_count >= 20) {
+				time_t now = time(NULL);
+				if (now < last_track_time || last_track_time + 4 < now) {
+					tcpup_track_stage1();
+					last_track_time  = now;
+					last_track_count = 0;
+				}
 			}
 		}
 
 		packet = (buf + 60);
-		while (FD_ISSET(netfd, &readfds)) {
+		if (FD_ISSET(netfd, &readfds)) {
 			int bufsize = 1500;
 			socklen_t tmp_alen = sizeof(tmp_addr);
 
+			test++;
 			assert(bufsize + 60 < sizeof(buf));
 			len = (*link_ops->recv_data)(netfd, packet, bufsize, SOT(&tmp_addr), &tmp_alen); 
 			if (len < 0) {
 				LOG_VERBOSE("read netfd failure\n");
-				break;
+				FD_CLR(netfd, &readfds);
+				nready--;
+				continue;
 			}
 
 			if (len > 0) {
@@ -105,11 +115,14 @@ static int vpn_run_loop(int tunfd, int netfd)
 		}
 
 		packet = (buf + 60);
-		while (FD_ISSET(tunfd, &readfds)) {
+		if (FD_ISSET(tunfd, &readfds)) {
+			test++;
 			len = tun_read(tunfd, packet, 1500);
 			if (len < 0) {
 				LOG_VERBOSE("read tunfd failure\n");
-				break;
+				FD_CLR(tunfd, &readfds);
+				nready--;
+				continue;
 			}
 
 			if (len > 0) {
@@ -123,6 +136,8 @@ static int vpn_run_loop(int tunfd, int netfd)
 				last_track_enable = 1;
 			}
 		}
+
+		assert(test > 0);
 	}
 
 clean:
