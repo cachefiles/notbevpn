@@ -3,6 +3,7 @@
 #include <android/log.h>
 #include <jni.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -10,11 +11,10 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 
-#define SOT(addr) (struct sockaddr *)addr
-#define MAX_PACKET_SIZE 2048
-#define MIN(a, b) ((a) < (b)? (a): (b))
-#define socklen_t size_t
-#define LOG_VERBOSE(fmt, args...)
+#include <base_link.h>
+
+#define tun_write write
+#define tun_read  read
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
@@ -28,16 +28,14 @@ static int last_track_count = 0;
 static int last_track_enable = 0;
 static time_t last_track_time = 0;
 
-struct low_link_ops {
-	int (*create)(void);
-	int (*get_adjust)(void);
-	int (*send_data)(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len);
-	int (*recv_data)(int devfd, void *buf, size_t len, struct sockaddr *ll_addr, socklen_t *ll_len);
-};
+static int _lostlink = 0;
+static int _disconnected = 0;
 
 static struct sockaddr_in ll_addr = {};
 static struct sockaddr_in tmp_addr = {};
-static struct low_link_ops *link_ops = NULL;
+
+extern struct low_link_ops udp_ops, icmp_ops;
+static struct low_link_ops *link_ops = &udp_ops;
 
 static int vpn_run_loop(int tunfd, int netfd)
 {
@@ -47,7 +45,7 @@ static int vpn_run_loop(int tunfd, int netfd)
 	int loop_try = 0;
 	char buf[2048];
 
-	for ( ; ; ) {
+	while ( !_disconnected && !_lostlink) {
 		int test = 0;
 		fd_set readfds;
 		char * packet;
@@ -144,34 +142,125 @@ clean:
 	return 0;
 }
 
-static int vpn_jni_init(JNIEnv *env, jclass clazz)
+#define MAX_FDS 100
+static int _alength = 0;
+static int _elements[MAX_FDS] = {};
+
+static int add_pending_fd(int fd)
+{
+	assert (_alength < MAX_FDS);
+	_elements[_alength++] = fd;
+	return 0;
+}
+
+static int get_pendingfds(int elements[], int length)
+{
+	if (length > _alength) {
+		length = _alength;
+		memcpy(elements, _elements, length * sizeof(int));
+		_alength = 0;
+		return length;
+	}
+
+	_alength -= length;
+	memcpy(elements, _elements, length * sizeof(int));
+	memmove(_elements, _elements + length, _alength * sizeof(int));
+	return length;
+}
+
+static int _mine_netid = -1;
+
+static int vpn_jni_alloc(JNIEnv *env, jclass clazz, int type)
+{
+	_mine_netid = random();
+
+	while (_mine_netid == -1) {
+		_mine_netid = random();
+	}
+
+	switch(type) {
+		case IPPROTO_ICMP:
+			link_ops = &icmp_ops;
+			break;
+
+		case IPPROTO_UDP:
+			link_ops = &udp_ops;
+			break;
+
+		default:
+			abort();
+			break;
+	}
+
+	return _mine_netid;
+}
+
+static int vpn_jni_free(JNIEnv *env, jclass clazz, jint which)
+{
+	_mine_netid = -1;
+	return 0;
+}
+
+static int vpn_jni_set_lostlink(JNIEnv *env, jclass clazz, jint which)
 {
 	return 0;
 }
 
-static int vpn_jni_loop(JNIEnv *env, jclass clazz)
+static int vpn_jni_set_server(JNIEnv *env, jclass clazz, jint which, jstring server)
 {
+	return 0;
+}
+
+static int vpn_jni_set_disconnect(JNIEnv *env, jclass clazz, jint which)
+{
+	return 0;
+}
+
+static int vpn_jni_get_pendingfds(JNIEnv *env, jclass clazz, jint which, jintArray fds)
+{
+	int count;
+	int length = (*env)->GetArrayLength(env, fds);
+	jint *elements = (*env)->GetIntArrayElements(env, fds, 0);
+	count = get_pendingfds(elements, length);
+	(*env)->ReleaseIntArrayElements(env, fds, elements, 0);
+	return count;
+}
+
+static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
+{
+	static int netfd = -1;
+
+	if (netfd == -1) {
+		netfd = link_ops->create();
+		assert (netfd != -1);
+		add_pending_fd(netfd);
+	}
+
+	if (_alength > 0) {
+		return 1;
+	}
+
+	vpn_run_loop(tunfd, netfd);
+	if (_alength > 0) {
+		return 1;
+	}
+
 	return 0;
 }
 
 static const char className[] = "";
 
 static JNINativeMethod methods[] = {
-	{"init", "()I", (void*)vpn_jni_init},
-#if 0
-	{"do_handshake", "(I)V", (void*)do_handshake},
-	{"set_dnsmode", "(I)V", (void*)set_dns_mode},
-	{"get_configure", "(I)[B", (void*)get_configure},
-	{"set_session", "(Ljava/lang/String;)V", (void*)set_session},
-	{"set_cookies", "(Ljava/lang/String;)V", (void*)set_cookies},
-	{"set_secret", "(Ljava/lang/String;)V", (void*)set_secret},
-	{"set_server", "([BI)V", (void*)set_server},
-	{"set_power_save", "(Z)V", (void*)set_power_save},
+	{"vpn_alloc", "(I)I", (void*)vpn_jni_alloc},
 
-	{"do_close", "(I)I", (void*)do_close},
-	{"do_open_udp", "()I", (void*)do_open_udp},
-	{"do_open", "()I", (void*)do_open},
-#endif
+	{"vpn_set_server", "(ILjava/lang/String;)I", (void*)vpn_jni_set_server},
+	{"vpn_set_lostlink", "(I)I", (void*)vpn_jni_set_lostlink},
+	{"vpn_set_disconnect", "(I)I", (void*)vpn_jni_set_disconnect},
+
+	{"vpn_get_pendingfds", "(ILI;)I", (void*)vpn_jni_get_pendingfds},
+
+	{"vpn_loop_main", "(II)I", (void*)vpn_jni_loop_main},
+	{"vpn_free", "(I)I", (void*)vpn_jni_free},
 };
 
 jint JNI_OnLoad(JavaVM* vm, void* reserved)
