@@ -99,7 +99,7 @@ int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struct socka
 
 static int icmp_low_link_create(void)
 {
-	int devfd, bufsiz;
+	int devfd, bufsiz, flags;
 
 #ifdef __linux__
 	devfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
@@ -114,6 +114,10 @@ static int icmp_low_link_create(void)
 	bufsiz = 384 * 1024;
 	setsockopt(devfd, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
 	setsockopt(devfd, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
+
+	flags = fcntl(devfd, F_GETFL);
+	flags = fcntl(devfd, F_SETFL, flags| O_NONBLOCK);
+
 	return devfd;
 }
 

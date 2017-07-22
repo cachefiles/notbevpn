@@ -27,7 +27,7 @@ static unsigned char TUNNEL_PADDIND_DNS[] = {
 
 static int udp_low_link_create(void)
 {
-	int bufsiz, devfd;
+	int bufsiz, devfd, flags;
 
 	devfd = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -38,6 +38,9 @@ static int udp_low_link_create(void)
 	bufsiz = 384 * 1024;
 	setsockopt(devfd, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
 	setsockopt(devfd, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
+
+	flags = fcntl(devfd, F_GETFL);
+	flags = fcntl(devfd, F_SETFL, flags| O_NONBLOCK);
 
 	return devfd;
 }

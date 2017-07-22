@@ -63,8 +63,9 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			if (last_track_enable && tcpup_track_stage2()) {
 				last_track_enable = 0;
 				if ((packet = get_tcpup_data(&len)) != NULL) {
-					(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+					ignore = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
 					LOG_VERBOSE("send probe data: %d\n", len);
+					if (ignore == -1) return -1;
 				}
 			}
 
@@ -104,6 +105,7 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			if (len > 0) {
 				len = tcpup_frag_input(packet, len, 1500);
 				ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
+				if (ignore == -1) return -1;
 			}
 
 			packet = get_tcpip_data(&len);
@@ -130,7 +132,8 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 
 			packet = get_tcpup_data(&len);
 			if (packet != NULL) {
-				(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+				ignore = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+				if (ignore == -1) return -1;
 				last_track_enable = 1;
 			}
 		}
@@ -211,16 +214,31 @@ static int vpn_jni_free(JNIEnv *env, jclass clazz, jint which)
 
 static int vpn_jni_set_lostlink(JNIEnv *env, jclass clazz, jint which)
 {
+	_lostlink = 1;
 	return 0;
 }
 
+int set_tcp_mss_by_mtu(int mtu);
 static int vpn_jni_set_server(JNIEnv *env, jclass clazz, jint which, jstring server)
 {
+	const char *domain = (*env)->GetStringUTFChars(env, server, 0);
+	ll_addr.sin_family = AF_INET;
+	ll_addr.sin_port   = htons(138);
+	ll_addr.sin_addr.s_addr = inet_addr(domain);
+	(*env)->ReleaseStringUTFChars(env, server, domain);
+
+	struct low_link_ops *link_ops = _link_ops[which];
+
+	int adjust = (*link_ops->get_adjust)();
+	_disconnected = 0;
+	set_tcp_mss_by_mtu(1500 - 20 - adjust);
+
 	return 0;
 }
 
 static int vpn_jni_set_disconnect(JNIEnv *env, jclass clazz, jint which)
 {
+	_disconnected = 1;
 	return 0;
 }
 
@@ -230,12 +248,13 @@ static int vpn_jni_get_pendingfds(JNIEnv *env, jclass clazz, jint which, jintArr
 	int length = (*env)->GetArrayLength(env, fds);
 	jint *elements = (*env)->GetIntArrayElements(env, fds, 0);
 	count = get_pendingfds(elements, length);
-	(*env)->ReleaseIntArrayElements(env, fds, elements, 0);
+	(*env)->ReleaseIntArrayElements(env, fds, elements, JNI_COMMIT);
 	return count;
 }
 
 static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 {
+	int link_failure;
 	static int netfd = -1;
 	struct low_link_ops *link_ops = _link_ops[which];
 
@@ -249,7 +268,14 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		return 1;
 	}
 
-	vpn_run_loop(tunfd, netfd, link_ops);
+	link_failure = vpn_run_loop(tunfd, netfd, link_ops);
+	if (link_failure == -1 && _disconnected == 0) {
+		close(netfd);
+		netfd = link_ops->create();
+		assert (netfd != -1);
+		add_pending_fd(netfd);
+	}
+
 	if (_alength > 0) {
 		return 1;
 	}
@@ -266,10 +292,10 @@ static JNINativeMethod methods[] = {
 	{"vpn_set_lostlink", "(I)I", (void*)vpn_jni_set_lostlink},
 	{"vpn_set_disconnect", "(I)I", (void*)vpn_jni_set_disconnect},
 
-	{"vpn_get_pendingfds", "(ILI;)I", (void*)vpn_jni_get_pendingfds},
+	{"vpn_get_pendingfds", "(I[I)I", (void*)vpn_jni_get_pendingfds},
 
 	{"vpn_loop_main", "(II)I", (void*)vpn_jni_loop_main},
-	{"vpn_free", "(I)I", (void*)vpn_jni_free},
+	{"vpn_free", "(I)I", (void*)vpn_jni_free}
 };
 
 jint JNI_OnLoad(JavaVM* vm, void* reserved)
