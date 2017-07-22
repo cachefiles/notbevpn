@@ -257,7 +257,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 	return 0;
 }
 
-static const char className[] = "";
+static const char className[] = "net/cachefiles/powervpn/PtcpupVPN";
 
 static JNINativeMethod methods[] = {
 	{"vpn_alloc", "(I)I", (void*)vpn_jni_alloc},
