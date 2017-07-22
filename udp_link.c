@@ -17,7 +17,6 @@
 
 #include <base_link.h>
 
-
 static unsigned char TUNNEL_PADDIND_DNS[] = {
 	0x20, 0x88, 0x81, 0x80, 0x00, 0x01, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x04, 0x77, 0x77, 0x77,
@@ -39,6 +38,7 @@ static int udp_low_link_create(void)
 	bufsiz = 384 * 1024;
 	setsockopt(devfd, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
 	setsockopt(devfd, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
+
 	return devfd;
 }
 

@@ -15,6 +15,7 @@
 
 #define tun_write write
 #define tun_read  read
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof(array[0]))
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
@@ -35,9 +36,8 @@ static struct sockaddr_in ll_addr = {};
 static struct sockaddr_in tmp_addr = {};
 
 extern struct low_link_ops udp_ops, icmp_ops;
-static struct low_link_ops *link_ops = &udp_ops;
 
-static int vpn_run_loop(int tunfd, int netfd)
+static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 {
 	int len;
 	int ignore;
@@ -168,36 +168,44 @@ static int get_pendingfds(int elements[], int length)
 	return length;
 }
 
-static int _mine_netid = -1;
+static struct low_link_ops *_link_ops[10] = {NULL};
 
 static int vpn_jni_alloc(JNIEnv *env, jclass clazz, int type)
 {
-	_mine_netid = random();
+	int i;
+	int index = -1;
+	struct low_link_ops **link_ops = NULL;
 
-	while (_mine_netid == -1) {
-		_mine_netid = random();
+	for (i = 0; i < ARRAY_SIZE(_link_ops); i++) {
+		if (_link_ops[i] == NULL) {
+			link_ops = &_link_ops[i];
+			index = i;
+			break;
+		}
 	}
 
-	switch(type) {
-		case IPPROTO_ICMP:
-			link_ops = &icmp_ops;
-			break;
+	if (link_ops != NULL) {
+		switch(type) {
+			case IPPROTO_ICMP:
+				*link_ops = &icmp_ops;
+				break;
 
-		case IPPROTO_UDP:
-			link_ops = &udp_ops;
-			break;
+			case IPPROTO_UDP:
+				*link_ops = &udp_ops;
+				break;
 
-		default:
-			abort();
-			break;
+			default:
+				abort();
+				break;
+		}
 	}
 
-	return _mine_netid;
+	return index;
 }
 
 static int vpn_jni_free(JNIEnv *env, jclass clazz, jint which)
 {
-	_mine_netid = -1;
+	_link_ops[which] = NULL;
 	return 0;
 }
 
@@ -229,6 +237,7 @@ static int vpn_jni_get_pendingfds(JNIEnv *env, jclass clazz, jint which, jintArr
 static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 {
 	static int netfd = -1;
+	struct low_link_ops *link_ops = _link_ops[which];
 
 	if (netfd == -1) {
 		netfd = link_ops->create();
@@ -240,7 +249,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		return 1;
 	}
 
-	vpn_run_loop(tunfd, netfd);
+	vpn_run_loop(tunfd, netfd, link_ops);
 	if (_alength > 0) {
 		return 1;
 	}
