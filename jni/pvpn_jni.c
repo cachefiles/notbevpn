@@ -4,6 +4,7 @@
 #include <jni.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -37,6 +38,14 @@ static struct sockaddr_in tmp_addr = {};
 
 extern struct low_link_ops udp_ops, icmp_ops;
 
+static int check_link_failure(int txretval)
+{
+	if (txretval == -1)
+		return (errno != ENOBUFS && errno != EAGAIN);
+
+	return 0;
+}
+
 static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 {
 	int len;
@@ -65,7 +74,7 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 				if ((packet = get_tcpup_data(&len)) != NULL) {
 					ignore = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
 					LOG_VERBOSE("send probe data: %d\n", len);
-					if (ignore == -1) return -1;
+					if (check_link_failure(ignore)) return -1;
 				}
 			}
 
@@ -105,7 +114,7 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			if (len > 0) {
 				len = tcpup_frag_input(packet, len, 1500);
 				ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
-				if (ignore == -1) return -1;
+				if (check_link_failure(ignore)) return -1;
 			}
 
 			packet = get_tcpip_data(&len);
@@ -133,7 +142,7 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			packet = get_tcpup_data(&len);
 			if (packet != NULL) {
 				ignore = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
-				if (ignore == -1) return -1;
+				if (check_link_failure(ignore)) return -1;
 				last_track_enable = 1;
 			}
 		}
@@ -171,6 +180,7 @@ static int get_pendingfds(int elements[], int length)
 	return length;
 }
 
+static int _link_fd = -1;
 static struct low_link_ops *_link_ops[10] = {NULL};
 
 static int vpn_jni_alloc(JNIEnv *env, jclass clazz, int type)
@@ -209,6 +219,8 @@ static int vpn_jni_alloc(JNIEnv *env, jclass clazz, int type)
 static int vpn_jni_free(JNIEnv *env, jclass clazz, jint which)
 {
 	_link_ops[which] = NULL;
+	close(_link_fd);
+	_link_fd = -1;
 	return 0;
 }
 
@@ -255,13 +267,14 @@ static int vpn_jni_get_pendingfds(JNIEnv *env, jclass clazz, jint which, jintArr
 static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 {
 	int link_failure;
-	static int netfd = -1;
+	int netfd = _link_fd;
 	struct low_link_ops *link_ops = _link_ops[which];
 
 	if (netfd == -1) {
 		netfd = link_ops->create();
 		assert (netfd != -1);
 		add_pending_fd(netfd);
+		_link_fd = netfd;
 	}
 
 	if (_alength > 0) {
@@ -269,7 +282,8 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 	}
 
 	link_failure = vpn_run_loop(tunfd, netfd, link_ops);
-	if (link_failure == -1 && _disconnected == 0) {
+	if (link_failure == -1
+			&& _disconnected == 0) {
 		close(netfd);
 		netfd = link_ops->create();
 		assert (netfd != -1);
@@ -283,7 +297,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 	return 0;
 }
 
-static const char className[] = "net/cachefiles/powervpn/PtcpupVPN";
+static const char className[] = "net/cachefiles/walleye/NotBeVPN";
 
 static JNINativeMethod methods[] = {
 	{"vpn_alloc", "(I)I", (void*)vpn_jni_alloc},
