@@ -4,6 +4,7 @@
 #include <jni.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
 
 #include <sys/types.h>
@@ -53,22 +54,18 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 	int nready = 0;
 	int loop_try = 0;
 	char buf[2048];
+	fd_set readfds;
+	int tun_nbytes = 0, tun_npacket = 0;
+	int net_nbytes = 0, net_npacket = 0;
 
+	FD_ZERO(&readfds);
 	while ( !_disconnected && !_lostlink) {
 		int test = 0;
-		fd_set readfds;
 		char * packet;
 		struct timeval timeo = {};
 
 		loop_try++;
 		if (nready <= 0 || loop_try > 1000) {
-			FD_ZERO(&readfds);
-			FD_SET(tunfd, &readfds);
-			FD_SET(netfd, &readfds);
-
-			timeo.tv_sec  = 1;
-			timeo.tv_usec = 0;
-
 			if (last_track_enable && tcpup_track_stage2()) {
 				last_track_enable = 0;
 				if ((packet = get_tcpup_data(&len)) != NULL) {
@@ -77,6 +74,13 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 					if (check_link_failure(ignore)) return -1;
 				}
 			}
+
+			FD_ZERO(&readfds);
+			FD_SET(tunfd, &readfds);
+			FD_SET(netfd, &readfds);
+
+			timeo.tv_sec  = 1;
+			timeo.tv_usec = 0;
 
 			test++;
 			loop_try = 0;
@@ -105,13 +109,16 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			assert(bufsize + 60 < sizeof(buf));
 			len = (*link_ops->recv_data)(netfd, packet, bufsize, SOT(&tmp_addr), &tmp_alen); 
 			if (len < 0) {
-				LOG_VERBOSE("read netfd failure\n");
+				LOG_VERBOSE("read netfd failure fd=%d, error: %s, %d/%d\n", netfd, strerror(errno), net_nbytes, net_npacket);
+				net_npacket = net_nbytes = 0;
 				FD_CLR(netfd, &readfds);
 				nready--;
 				continue;
 			}
 
 			if (len > 0) {
+				net_npacket++;
+				net_nbytes += len;
 				len = tcpup_frag_input(packet, len, 1500);
 				ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
 				if (check_link_failure(ignore)) return -1;
@@ -120,6 +127,7 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			packet = get_tcpip_data(&len);
 			if (packet != NULL) {
 				len = tun_write(tunfd, packet, len);
+				// LOG_VERBOSE("write tun: %d\n", len);
 			}
 		}
 
@@ -128,13 +136,16 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			test++;
 			len = tun_read(tunfd, packet, 1500);
 			if (len < 0) {
-				LOG_VERBOSE("read tunfd failure\n");
+				LOG_VERBOSE("read tunfd failure fd = %d, %s %d/%d\n", tunfd, strerror(errno), tun_nbytes, tun_npacket);
+				tun_npacket = tun_nbytes = 0;
 				FD_CLR(tunfd, &readfds);
 				nready--;
 				continue;
 			}
 
 			if (len > 0) {
+				tun_nbytes += len;
+				tun_npacket++;
 				len = tcpip_frag_input(packet, len, 1500);
 				ignore = (len <= 0)? 0: tun_write(tunfd, packet, len);
 			}
@@ -142,6 +153,7 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			packet = get_tcpup_data(&len);
 			if (packet != NULL) {
 				ignore = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+				// LOG_VERBOSE("send data: %d\n", ignore);
 				if (check_link_failure(ignore)) return -1;
 				last_track_enable = 1;
 			}
@@ -288,6 +300,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		netfd = link_ops->create();
 		assert (netfd != -1);
 		add_pending_fd(netfd);
+		_link_fd = netfd;
 	}
 
 	if (_alength > 0) {

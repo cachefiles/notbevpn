@@ -67,7 +67,7 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 	count = MIN(count, len);
 	packet_decrypt(htons(key), buf, packet + sizeof(*hdr), count);
 
-	LOG_VERBOSE("icmp_low_link_recv_data: %d\n", count);
+	// LOG_VERBOSE("icmp_low_link_recv_data: %d\n", count);
 	return count;
 }
 

@@ -339,22 +339,17 @@ int main(int argc, char *argv[])
 	fcntl(tunfd, F_SETFL, flags | O_NONBLOCK);
 
 	int nready = 0;
+	fd_set readfds;
+
+	FD_ZERO(&readfds);
 	for ( ; ; ) {
 		int ignore;
 		int newfd;
-		fd_set readfds;
 		char * packet;
 		struct timeval timeo = {};
 
 		int bug_check = 0;
 		if (nready <= 0 || busy_loop > 1000) {
-			FD_ZERO(&readfds);
-			FD_SET(tunfd, &readfds);
-			FD_SET(netfd, &readfds);
-
-			timeo.tv_sec  = 1;
-			timeo.tv_usec = 0;
-
 			if (last_track_enable && tcpup_track_stage2()) {
 				last_track_enable = 0;
 				if ((packet = get_tcpup_data(&len)) != NULL) {
@@ -362,6 +357,13 @@ int main(int argc, char *argv[])
 					LOG_DEBUG("send probe data: %d\n", len);
 				}
 			}
+
+			FD_ZERO(&readfds);
+			FD_SET(tunfd, &readfds);
+			FD_SET(netfd, &readfds);
+
+			timeo.tv_sec  = 1;
+			timeo.tv_usec = 0;
 
 			bug_check++;
 			busy_loop = 0;
