@@ -263,10 +263,22 @@ static int vpn_jni_set_lostlink(JNIEnv *env, jclass clazz, jint which)
 int set_tcp_mss_by_mtu(int mtu);
 static int vpn_jni_set_server(JNIEnv *env, jclass clazz, jint which, jstring server)
 {
+	char *port_ptr = NULL;
+	char _domain[64] = {};
 	const char *domain = (*env)->GetStringUTFChars(env, server, 0);
-	ll_addr.sin_family = AF_INET;
+
+	strncpy(_domain, domain, sizeof(_domain) -1);
 	ll_addr.sin_port   = htons(138);
-	ll_addr.sin_addr.s_addr = inet_addr(domain);
+
+	port_ptr = strchr(_domain, ':');
+	if (port_ptr != NULL) {
+		*port_ptr++ = 0;
+		ll_addr.sin_port = htons(atoi(port_ptr));
+	}
+
+	ll_addr.sin_family = AF_INET;
+	ll_addr.sin_addr.s_addr = inet_addr(_domain);
+
 	(*env)->ReleaseStringUTFChars(env, server, domain);
 
 	struct low_link_ops *link_ops = _link_ops[which];

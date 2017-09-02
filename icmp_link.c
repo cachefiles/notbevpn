@@ -50,6 +50,7 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 
 	if (count <= 0) return count;
 	if (count <= IPHDR_SKIP_LEN) return -1;
+	LOG_VERBOSE("icmp_low_link_recv_data: %d\n", count);
 
 	packet = _plain_stream + IPHDR_SKIP_LEN;
 	count -= IPHDR_SKIP_LEN;
@@ -67,7 +68,6 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 	count = MIN(count, len);
 	packet_decrypt(htons(key), buf, packet + sizeof(*hdr), count);
 
-	// LOG_VERBOSE("icmp_low_link_recv_data: %d\n", count);
 	return count;
 }
 
