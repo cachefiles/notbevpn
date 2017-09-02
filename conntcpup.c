@@ -203,6 +203,14 @@ static int establish_timeout(int live_count)
 	return 300;
 }
 
+static const char *P(struct in_addr *ip)
+{
+	static int _si = 0;
+	static char sbuf[4][16] = {};
+	char *_sbuf = sbuf[_si++ % 4];
+	return inet_ntop(AF_INET, ip, _sbuf, 16);
+}
+
 static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t dport)
 {
 	time_t now;
@@ -228,6 +236,8 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 
 		conn->c.ip_src = ip->ip_src;
 		conn->c.ip_dst = ip->ip_dst;
+
+		log_verbose("new connection: %p, %s:%d -> %s:%d %d\n", conn, P(&ip->ip_src), htons(sport), P(&ip->ip_dst), htons(dport), _tcp_pool._nat_count);
 
 		unsigned cksum = tcpip_checksum(0, &ip->ip_src, 4, 0);
 		conn->c.ip_sum = tcpip_checksum(cksum, &ip->ip_dst, 4, 0);
@@ -265,7 +275,6 @@ free_conn:
 		}
 	}
 
-	log_verbose("new connection: %p, %d\n", conn, _tcp_pool._nat_count);
 	return conn;
 }
 
