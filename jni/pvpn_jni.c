@@ -21,6 +21,8 @@
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
+int check_blocked(int tunfd, unsigned char *packet, size_t len);
+
 char * get_tcpup_data(int *len);
 char * get_tcpip_data(int *len);
 
@@ -33,6 +35,7 @@ static time_t last_track_time = 0;
 
 static int _lostlink = 0;
 static int _disconnected = 0;
+static int _is_powersave = 0;
 
 static struct sockaddr_in ll_addr = {};
 static struct sockaddr_in tmp_addr = {};
@@ -45,6 +48,16 @@ static int check_link_failure(int txretval)
 		return (errno != ENOBUFS && errno != EAGAIN);
 
 	return 0;
+}
+
+
+static int is_blocked(int tunfd, unsigned char *packet, size_t len)
+{
+	if (_is_powersave) {
+		return check_blocked(tunfd, packet, len);
+	}
+
+	return _is_powersave;
 }
 
 static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
@@ -140,6 +153,11 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 				tun_npacket = tun_nbytes = 0;
 				FD_CLR(tunfd, &readfds);
 				nready--;
+				continue;
+			}
+
+			if (is_blocked(tunfd, packet, len)) {
+				LOG_VERBOSE("ignore blocked data\n");
 				continue;
 			}
 
@@ -266,6 +284,12 @@ static int vpn_jni_set_disconnect(JNIEnv *env, jclass clazz, jint which)
 	return 0;
 }
 
+static int vpn_jni_set_powersave(JNIEnv *env, jclass clazz, jint which, jboolean save)
+{
+	_is_powersave = save;
+	return 0;
+}
+
 static int vpn_jni_get_pendingfds(JNIEnv *env, jclass clazz, jint which, jintArray fds)
 {
 	int count;
@@ -321,6 +345,7 @@ static JNINativeMethod methods[] = {
 
 	{"vpn_get_pendingfds", "(I[I)I", (void*)vpn_jni_get_pendingfds},
 
+	{"vpn_set_powersave", "(IZ)I", (void*)vpn_jni_set_powersave},
 	{"vpn_loop_main", "(II)I", (void*)vpn_jni_loop_main},
 	{"vpn_free", "(I)I", (void*)vpn_jni_free}
 };
