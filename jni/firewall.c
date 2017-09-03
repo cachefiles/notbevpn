@@ -38,6 +38,8 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 #define VERSION_IPV4 4
 #define VERSION_IPV6 6
 
+ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet);
+
 int check_blocked(int tunfd, unsigned char *packet, size_t len)
 {
     nat_iphdr_t *ip;
@@ -54,15 +56,50 @@ int check_blocked(int tunfd, unsigned char *packet, size_t len)
 
 	if (ip->ip_p == IPPROTO_UDP) {
 		uh = (nat_udphdr_t *)(ip + 1);
-		return htons(uh->uh_dport) == 53;
+		switch(htons(uh->uh_dport)) {
+			case 443:
+				return 1;
+
+			default:
+				break;
+		}
 	}
 
 	if (ip->ip_p == IPPROTO_TCP) {
 		th = (nat_tcphdr_t *)(ip + 1);
 		switch(htons(th->th_dport)) {
-			case 80: case 443: case 8080: case 8000:
-				return (th->th_flags & (TH_SYN|TH_ACK)) == TH_SYN;
+			case 80:
+				if ((th->th_flags & (TH_SYN|TH_ACK)) == TH_SYN) {
+					ssize_t count = tcp_frag_rst(th, packet);
+					if (count > 0) write(tunfd, packet, count);
+					return 1;
+				}
 
+			default:
+				break;
+		}
+	}
+
+	return 0;
+}
+
+int check_blocked_normal(int tunfd, unsigned char *packet, size_t len)
+{
+    nat_iphdr_t *ip;
+
+    nat_ip6hdr_t *ip6;
+    nat_tcphdr_t *th, h1;
+    nat_udphdr_t *uh, u1;
+
+    ip = (nat_iphdr_t *)packet;
+
+    if (ip->ip_v != VERSION_IPV4) {
+		return 0;
+	}
+
+	if (ip->ip_p == IPPROTO_UDP) {
+		uh = (nat_udphdr_t *)(ip + 1);
+		switch(htons(uh->uh_dport)) {
 			default:
 				break;
 		}

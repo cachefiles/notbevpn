@@ -22,6 +22,7 @@
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
 int check_blocked(int tunfd, unsigned char *packet, size_t len);
+int check_blocked_normal(int tunfd, unsigned char *packet, size_t len);
 
 char * get_tcpup_data(int *len);
 char * get_tcpip_data(int *len);
@@ -55,6 +56,8 @@ static int is_blocked(int tunfd, unsigned char *packet, size_t len)
 {
 	if (_is_powersave) {
 		return check_blocked(tunfd, packet, len);
+	} else {
+		return check_blocked_normal(tunfd, packet, len);
 	}
 
 	return _is_powersave;
