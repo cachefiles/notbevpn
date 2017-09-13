@@ -27,6 +27,7 @@ static unsigned char TUNNEL_PADDIND_DNS[] = {
 
 static int udp_low_link_create(void)
 {
+	int error;
 	int bufsiz, devfd, flags;
 
 	devfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -42,6 +43,19 @@ static int udp_low_link_create(void)
 	flags = fcntl(devfd, F_GETFL);
 	flags = fcntl(devfd, F_SETFL, flags| O_NONBLOCK);
 
+	static struct sockaddr_in sin_addr = {};
+	sin_addr.sin_family = AF_INET;
+	sin_addr.sin_addr.s_addr = 0;
+	error = bind(devfd, (struct sockaddr *)&sin_addr, sizeof(sin_addr));
+	if (error != 0) {
+		goto ignore_error;
+	}
+
+	size_t slen = sizeof(sin_addr);
+	error = getsockname(devfd, (struct sockaddr *)&sin_addr, &slen);
+	LOG_DEBUG("getsockname: %s:%d\n", inet_ntoa(sin_addr.sin_addr), htons(sin_addr.sin_port));
+
+ignore_error:
 	return devfd;
 }
 

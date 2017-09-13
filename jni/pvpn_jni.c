@@ -41,6 +41,10 @@ static int _is_powersave = 0;
 static struct sockaddr_in ll_addr = {};
 static struct sockaddr_in tmp_addr = {};
 
+static int _probe_sent = 0;
+static int _invalid_recv = 0;
+static int _invalid_sent = 0;
+
 extern struct low_link_ops udp_ops, icmp_ops;
 
 static int check_link_failure(int txretval)
@@ -84,9 +88,11 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 		if (nready <= 0 || loop_try > 1000) {
 			if (last_track_enable && tcpup_track_stage2()) {
 				last_track_enable = 0;
-				if ((packet = get_tcpup_data(&len)) != NULL) {
+				if ((packet = get_tcpup_data(&len)) != NULL
+						&& _is_powersave == 0) {
 					ignore = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
-					LOG_VERBOSE("send probe data: %d\n", len);
+					LOG_DEBUG("send probe data: %d\n", len);
+					_probe_sent++;
 					if (check_link_failure(ignore)) return -1;
 				}
 			}
@@ -136,6 +142,7 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 				net_npacket++;
 				net_nbytes += len;
 				len = tcpup_frag_input(packet, len, 1500);
+				if (len > 0) _invalid_sent ++;
 				ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
 				if (check_link_failure(ignore)) return -1;
 			}
@@ -145,6 +152,8 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 				len = tun_write(tunfd, packet, len);
 				// LOG_VERBOSE("write tun: %d\n", len);
 			}
+
+			if (packet == NULL) _invalid_recv++;
 		}
 
 		packet = (buf + 60);
@@ -301,6 +310,7 @@ static int vpn_jni_set_disconnect(JNIEnv *env, jclass clazz, jint which)
 
 static int vpn_jni_set_powersave(JNIEnv *env, jclass clazz, jint which, jboolean save)
 {
+	LOG_DEBUG("invalid TX/RX %d/%d, probe TX %d\n", _invalid_sent, _invalid_recv, _probe_sent);
 	_is_powersave = save;
 	return 0;
 }

@@ -26,6 +26,7 @@
 #include <netinet/tcp.h>
 #endif
 
+#include <base_link.h>
 #include <bsdinet/tcpup.h>
 
 typedef unsigned char uint8_t;
@@ -58,6 +59,7 @@ int check_blocked(int tunfd, unsigned char *packet, size_t len)
 		uh = (nat_udphdr_t *)(ip + 1);
 		switch(htons(uh->uh_dport)) {
 			case 443:
+				LOG_VERBOSE("block udp/443 to: %s\n", inet_ntoa(ip->ip_dst));
 				return 1;
 
 			default:
@@ -69,9 +71,11 @@ int check_blocked(int tunfd, unsigned char *packet, size_t len)
 		th = (nat_tcphdr_t *)(ip + 1);
 		switch(htons(th->th_dport)) {
 			case 80:
+			case 443:
 				if ((th->th_flags & (TH_SYN|TH_ACK)) == TH_SYN) {
 					ssize_t count = tcp_frag_rst(th, packet);
 					if (count > 0) write(tunfd, packet, count);
+					LOG_VERBOSE("block tcp/%d to: %s\n", htons(th->th_dport), inet_ntoa(ip->ip_dst));
 					return 1;
 				}
 
