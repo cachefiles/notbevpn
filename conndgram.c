@@ -147,7 +147,7 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 	return NULL;
 }
 
-#define P(x) ip2text
+#define P(x) ip2text(x)
 const char *ip2text(struct in_addr *ip);
 
 static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t dport)

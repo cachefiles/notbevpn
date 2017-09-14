@@ -223,7 +223,29 @@ static int get_pendingfds(int elements[], int length)
 }
 
 static int _link_fd = -1;
+static struct sockaddr_in _last_bind[10] = {};
 static struct low_link_ops *_link_ops[10] = {NULL};
+
+static int bind_last_address(int netfd, int which)
+{
+	static struct sockaddr_in sin_addr = _last_bind[which];
+
+	sin_addr.sin_family = AF_INET;
+	sin_addr.sin_addr.s_addr = 0;
+
+	error = bind(netfd, (struct sockaddr *)&sin_addr, sizeof(sin_addr));
+	if (error != 0) {
+		goto ignore_error;
+	}
+
+	size_t slen = sizeof(sin_addr);
+	error = getsockname(netfd, (struct sockaddr *)&_last_bind[which], &slen);
+	LOG_DEBUG("getsockname: %s:%d, error = %d\n",
+			inet_ntoa(sin_addr.sin_addr), htons(sin_addr.sin_port), error);
+
+ignore_error:
+	return 0;
+}
 
 static int vpn_jni_alloc(JNIEnv *env, jclass clazz, int type)
 {
@@ -334,6 +356,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 	if (netfd == -1) {
 		netfd = link_ops->create();
 		assert (netfd != -1);
+		bind_last_address(netfd, which);
 		add_pending_fd(netfd);
 		_link_fd = netfd;
 	}
@@ -348,6 +371,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		close(netfd);
 		netfd = link_ops->create();
 		assert (netfd != -1);
+		bind_last_address(netfd, which);
 		add_pending_fd(netfd);
 		_link_fd = netfd;
 	}
