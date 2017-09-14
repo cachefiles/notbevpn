@@ -203,7 +203,8 @@ static int establish_timeout(int live_count)
 	return 300;
 }
 
-static const char *P(struct in_addr *ip)
+#define P(x) ip2text(x)
+const char *ip2text(struct in_addr *ip)
 {
 	static int _si = 0;
 	static char sbuf[4][16] = {};
