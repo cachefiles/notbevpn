@@ -45,6 +45,12 @@ static int _probe_sent = 0;
 static int _invalid_recv = 0;
 static int _invalid_sent = 0;
 
+static int _total_tx_pkt = 0;
+static int _total_tx_bytes = 0;
+
+static int _total_rx_pkt = 0;
+static int _total_rx_bytes = 0;
+
 extern struct low_link_ops udp_ops, icmp_ops;
 
 static int check_link_failure(int txretval)
@@ -151,6 +157,10 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			if (packet != NULL) {
 				len = tun_write(tunfd, packet, len);
 				// LOG_VERBOSE("write tun: %d\n", len);
+				if (len > 0) {
+					_total_rx_pkt++;
+					_total_rx_bytes += len;
+				}
 			}
 
 			if (packet == NULL) _invalid_recv++;
@@ -168,6 +178,8 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 				continue;
 			}
 
+			_total_tx_pkt++;
+			_total_tx_bytes += len;
 			if (is_blocked(tunfd, packet, len)) {
 				LOG_VERBOSE("ignore blocked data\n");
 				continue;
@@ -178,6 +190,10 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 				tun_npacket++;
 				len = tcpip_frag_input(packet, len, 1500);
 				ignore = (len <= 0)? 0: tun_write(tunfd, packet, len);
+				if (len > 0) {
+					_total_rx_pkt++;
+					_total_rx_bytes += len;
+				}
 			}
 
 			packet = get_tcpup_data(&len);
@@ -338,6 +354,29 @@ static int vpn_jni_set_powersave(JNIEnv *env, jclass clazz, jint which, jboolean
 	return 0;
 }
 
+#define PUT_ONE(index, length, array, value) \
+	do { if (index < length) array[index++] = value; } while (0)
+
+static int vpn_jni_get_statistics(JNIEnv *env, jclass clazz, jint which, jintArray fds)
+{
+	int count = 0;
+	int length = (*env)->GetArrayLength(env, fds);
+	jint *elements = (*env)->GetIntArrayElements(env, fds, 0);
+
+	PUT_ONE(count, length, elements, _probe_sent);
+	PUT_ONE(count, length, elements, _invalid_sent);
+	PUT_ONE(count, length, elements, _invalid_recv);
+
+	PUT_ONE(count, length, elements, _total_tx_pkt);
+	PUT_ONE(count, length, elements, _total_tx_bytes);
+
+	PUT_ONE(count, length, elements, _total_rx_pkt);
+	PUT_ONE(count, length, elements, _total_rx_bytes);
+
+	(*env)->ReleaseIntArrayElements(env, fds, elements, JNI_COMMIT);
+	return count;
+}
+
 static int vpn_jni_get_pendingfds(JNIEnv *env, jclass clazz, jint which, jintArray fds)
 {
 	int count;
@@ -393,6 +432,7 @@ static JNINativeMethod methods[] = {
 	{"vpn_set_lostlink", "(I)I", (void*)vpn_jni_set_lostlink},
 	{"vpn_set_disconnect", "(I)I", (void*)vpn_jni_set_disconnect},
 
+	{"vpn_get_statistics", "(I[I)I", (void*)vpn_jni_get_statistics},
 	{"vpn_get_pendingfds", "(I[I)I", (void*)vpn_jni_get_pendingfds},
 
 	{"vpn_set_powersave", "(IZ)I", (void*)vpn_jni_set_powersave},
