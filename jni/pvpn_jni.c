@@ -228,7 +228,8 @@ static struct low_link_ops *_link_ops[10] = {NULL};
 
 static int bind_last_address(int netfd, int which)
 {
-	static struct sockaddr_in sin_addr = _last_bind[which];
+	int error;
+	struct sockaddr_in sin_addr = _last_bind[which];
 
 	sin_addr.sin_family = AF_INET;
 	sin_addr.sin_addr.s_addr = 0;
