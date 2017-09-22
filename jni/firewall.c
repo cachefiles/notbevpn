@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
+#include <assert.h>
 
 #ifdef __linux__
 #define __BSD_VISIBLE 1
@@ -28,6 +29,7 @@
 
 #include <base_link.h>
 #include <bsdinet/tcpup.h>
+#include <router.h>
 
 typedef unsigned char uint8_t;
 
@@ -41,17 +43,35 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 
 ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet);
 
-int check_blocked(int tunfd, unsigned char *packet, size_t len)
+static const char _inet_prefix[] = "104.16.0.0/12 184.84.0.0/14 23.64.0.0/14 23.32.0.0/11 96.6.0.0/15 162.125.0.0/16 203.0.0.0/8 66.6.32.0/20 199.59.148.0/22 31.13.70.0/23 108.160.160.0/20 8.8.0.0/16 64.18.0.0/20 64.233.160.0/19 66.102.0.0/20 66.249.80.0/20 72.14.192.0/18 74.125.0.0/16 108.177.8.0/21 173.194.0.0/16 207.126.144.0/20 209.85.128.0/17 216.58.192.0/19 216.239.32.0/19 172.217.0.0/19";
+
+int is_google_net(struct in_addr net)
 {
-    nat_iphdr_t *ip;
+	int index;
+	unsigned network = 0;
+	static int _is_initilize = 0;
 
-    nat_ip6hdr_t *ip6;
-    nat_tcphdr_t *th, h1;
-    nat_udphdr_t *uh, u1;
+	if (_is_initilize == 0) {
+		route_restore(_inet_prefix);
+		_is_initilize = 1;
+	}
 
-    ip = (nat_iphdr_t *)packet;
+	return route_get(net) != NULL;
+}
 
-    if (ip->ip_v != VERSION_IPV4) {
+int check_blocked(int tunfd, unsigned char *packet, size_t len, time_t *limited)
+{
+	ssize_t count; 
+	time_t current;
+	nat_iphdr_t *ip;
+
+	nat_ip6hdr_t *ip6;
+	nat_tcphdr_t *th, h1;
+	nat_udphdr_t *uh, u1;
+
+	ip = (nat_iphdr_t *)packet;
+
+	if (ip->ip_v != VERSION_IPV4) {
 		return 0;
 	}
 
@@ -59,7 +79,7 @@ int check_blocked(int tunfd, unsigned char *packet, size_t len)
 		uh = (nat_udphdr_t *)(ip + 1);
 		switch(htons(uh->uh_dport)) {
 			case 443:
-				LOG_VERBOSE("block udp/443 to: %s\n", inet_ntoa(ip->ip_dst));
+				LOG_DEBUG("block!%d udp/443 to: :%d -> %s\n", tunfd, htons(uh->uh_sport), inet_ntoa(ip->ip_dst));
 				return 1;
 
 			default:
@@ -73,9 +93,28 @@ int check_blocked(int tunfd, unsigned char *packet, size_t len)
 			case 80:
 			case 443:
 				if ((th->th_flags & (TH_SYN|TH_ACK)) == TH_SYN) {
-					ssize_t count = tcp_frag_rst(th, packet);
-					if (count > 0) write(tunfd, packet, count);
-					LOG_VERBOSE("block tcp/%d to: %s\n", htons(th->th_dport), inet_ntoa(ip->ip_dst));
+					if (is_google_net(ip->ip_dst)) {
+						LOG_DEBUG("active!%d tcp/%d to: :%d -> %s\n",
+								tunfd, htons(th->th_dport), htons(th->th_sport), inet_ntoa(ip->ip_dst));
+						time(limited);
+						break;
+					}
+
+					time(&current);
+					if (*limited + 18 < current) {
+						LOG_DEBUG("ignore!%d tcp/%d to: :%d -> %s\n",
+								tunfd, htons(th->th_dport), htons(th->th_sport), inet_ntoa(ip->ip_dst));
+						break;
+					} else if (*limited + 180 > current) {
+						LOG_DEBUG("reject!%d tcp/%d to: :%d -> %s\n",
+								tunfd, htons(th->th_dport), htons(th->th_sport), inet_ntoa(ip->ip_dst));
+						count = tcp_frag_rst(th, packet);
+						if (count > 0) write(tunfd, packet, count);
+					} else {
+						LOG_DEBUG("drop!%d tcp/%d to: :%d -> %s\n",
+								tunfd, htons(th->th_dport), htons(th->th_sport), inet_ntoa(ip->ip_dst));
+					}
+
 					return 1;
 				}
 
@@ -89,15 +128,15 @@ int check_blocked(int tunfd, unsigned char *packet, size_t len)
 
 int check_blocked_normal(int tunfd, unsigned char *packet, size_t len)
 {
-    nat_iphdr_t *ip;
+	nat_iphdr_t *ip;
 
-    nat_ip6hdr_t *ip6;
-    nat_tcphdr_t *th, h1;
-    nat_udphdr_t *uh, u1;
+	nat_ip6hdr_t *ip6;
+	nat_tcphdr_t *th, h1;
+	nat_udphdr_t *uh, u1;
 
-    ip = (nat_iphdr_t *)packet;
+	ip = (nat_iphdr_t *)packet;
 
-    if (ip->ip_v != VERSION_IPV4) {
+	if (ip->ip_v != VERSION_IPV4) {
 		return 0;
 	}
 
