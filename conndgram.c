@@ -26,6 +26,8 @@
 #endif
 
 #include <bsdinet/tcpup.h>
+
+#include "tx_debug.h"
 #include "portpool.h"
 
 typedef unsigned char uint8_t;
@@ -48,9 +50,6 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 
 #define CHECK_FLAGS(flags, want) ((flags) & (want))
 #define xchg(s, d, t) { t _t = d; d = s; s = _t; } 
-
-#define log_verbose printf
-#define log_error printf
 
 struct udpuphdr {
     int u_conv;

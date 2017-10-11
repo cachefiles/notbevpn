@@ -18,8 +18,10 @@ int packet_encrypt(unsigned short key, void *dst, const void *src, size_t len);
 #endif
 #endif
 
+
 #ifndef LOG_DEBUG
-#define LOG_DEBUG(fmt, args...)   fprintf(stderr, fmt, ##args)
+int log_tag_putlog(const char *tag, const char *fmt, ...);
+#define LOG_DEBUG(fmt, args...)   log_tag_putlog("D", fmt, ##args)
 #endif
 
 #ifndef LOG_VERBOSE

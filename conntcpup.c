@@ -26,6 +26,7 @@
 
 #include <bsdinet/tcpup.h>
 
+#include "tx_debug.h"
 #include "portpool.h"
 
 typedef unsigned char uint8_t;
@@ -48,9 +49,6 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 
 #define CHECK_FLAGS(flags, want) ((flags) & (want))
 #define xchg(s, d, t) { t _t = d; d = s; s = _t; } 
-
-#define log_verbose printf
-#define log_error printf
 
 typedef struct _tcp_state_t {
 	int flags;
@@ -267,8 +265,10 @@ free_conn:
 			if ((item->last_alive > now) ||
 					((cflags| sflags) & TH_RST) ||
 					(item->last_alive + timeout < now)) {
-				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _tcp_pool._nat_count, now, item->last_alive);
-				log_verbose("connection: cflags %x sflags %x fin %x rst %x\n", item->c.flags, item->s.flags, TH_FIN, TH_RST);
+				tcp_state_t *c = &item->c;
+				log_verbose("free stream: %p total=%d idle=%ld %s:%d -> %s:%d, flags %x -> %x\n",
+						item, _tcp_pool._nat_count, now - item->last_alive,
+						P(&c->ip_src), htons(c->th_sport), P(&c->ip_dst), htons(c->th_dport), item->s.flags, item->c.flags);
 				free_nat_port(&_tcp_pool, item->s.th_dport);
 				LIST_REMOVE(item, entry);
 				free(item);
