@@ -210,6 +210,41 @@ const char *ip2text(struct in_addr *ip)
 	return inet_ntop(AF_INET, ip, _sbuf, 16);
 }
 
+static int conngc_ipv4(int type, time_t now, nat_conntrack_t *skip)
+{
+	if (now < _ipv4_gc_time || now > _ipv4_gc_time + 120) {
+		nat_conntrack_t *item, *next;
+
+		_ipv4_gc_time = now;
+		LIST_FOREACH_SAFE(item, &_ipv4_header, entry, next) {
+			if (item == skip) {
+				continue;
+			}
+
+			int cflags = item->c.flags;
+			int sflags = item->s.flags;
+			int mflags = (TH_SYN| TH_FIN);
+			int s_established = (sflags & mflags) == TH_SYN;
+			int c_established = (cflags & mflags) == TH_SYN;
+			int timeout = (s_established && c_established)? establish_timeout(_tcp_pool._nat_count): 60;
+
+			if ((item->last_alive > now) ||
+					((cflags| sflags) & TH_RST) ||
+					(item->last_alive + timeout < now)) {
+				tcp_state_t *c = &item->c;
+				log_verbose("free stream: %p total=%d idle=%ld %s:%d -> %s:%d, flags %x -> %x\n",
+						item, _tcp_pool._nat_count, now - item->last_alive,
+						P(&c->ip_src), htons(c->th_sport), P(&c->ip_dst), htons(c->th_dport), item->s.flags, item->c.flags);
+				free_nat_port(&_tcp_pool, item->s.th_dport);
+				LIST_REMOVE(item, entry);
+				free(item);
+			}
+		}
+	}
+
+	return 0;
+}
+
 static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t dport)
 {
 	time_t now;
@@ -246,35 +281,7 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 	}
 
 free_conn:
-	if (now < _ipv4_gc_time || now > _ipv4_gc_time + 120) {
-		nat_conntrack_t *item, *next;
-
-		_ipv4_gc_time = now;
-		LIST_FOREACH_SAFE(item, &_ipv4_header, entry, next) {
-			if (item == conn) {
-				continue;
-			}
-
-			int cflags = item->c.flags;
-			int sflags = item->s.flags;
-			int mflags = (TH_SYN| TH_FIN);
-			int s_established = (sflags & mflags) == TH_SYN;
-			int c_established = (cflags & mflags) == TH_SYN;
-			int timeout = (s_established && c_established)? establish_timeout(_tcp_pool._nat_count): 60;
-
-			if ((item->last_alive > now) ||
-					((cflags| sflags) & TH_RST) ||
-					(item->last_alive + timeout < now)) {
-				tcp_state_t *c = &item->c;
-				log_verbose("free stream: %p total=%d idle=%ld %s:%d -> %s:%d, flags %x -> %x\n",
-						item, _tcp_pool._nat_count, now - item->last_alive,
-						P(&c->ip_src), htons(c->th_sport), P(&c->ip_dst), htons(c->th_dport), item->s.flags, item->c.flags);
-				free_nat_port(&_tcp_pool, item->s.th_dport);
-				LIST_REMOVE(item, entry);
-				free(item);
-			}
-		}
-	}
+	conngc_ipv4(0, now, conn);
 
 	return conn;
 }
@@ -346,11 +353,44 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 	return NULL;
 }
 
+static int conngc_ipv6(int type, time_t now, nat_conntrack_t *skip)
+{
+	nat_conntrack_t *conn, *item, *next;
+
+	if (now < _ipv6_gc_time || now > _ipv6_gc_time + 120) {
+		_ipv6_gc_time = now;
+		LIST_FOREACH_SAFE(item, &_ipv6_header, entry, next) {
+			if (item == skip) {
+				continue;
+			}
+
+			int cflags = item->c.flags;
+			int sflags = item->s.flags;
+			int mflags = (TH_SYN| TH_FIN);
+			int s_established = (sflags & mflags) == TH_SYN;
+			int c_established = (cflags & mflags) == TH_SYN;
+			int timeout = (s_established && c_established)? establish_timeout(_tcp_pool._nat_count): 60;
+
+			if ((item->last_alive > now) ||
+					((cflags| sflags) & TH_RST) ||
+					(item->last_alive + timeout < now)) {
+				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _tcp_pool._nat_count, now, item->last_alive);
+				log_verbose("connection: cflags %x sflags %x fin %x rst %x\n", item->c.flags, item->s.flags, TH_FIN, TH_RST);
+				free_nat_port(&_tcp_pool, item->s.th_dport);
+				LIST_REMOVE(item, entry);
+				free(item);
+			}
+		}
+	}
+
+	return 0;
+}
+
 static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t dport)
 {
 	time_t now;
 	nat_ip6hdr_t *ip;
-	nat_conntrack_t *conn, *item, *next;
+	nat_conntrack_t *conn;
 	unsigned short nat_port = alloc_nat_port(&_tcp_pool);
 
 	now = time(NULL);
@@ -380,31 +420,7 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 	}
 
 free_conn:
-	if (now < _ipv6_gc_time || now > _ipv6_gc_time + 120) {
-		_ipv6_gc_time = now;
-		LIST_FOREACH_SAFE(item, &_ipv6_header, entry, next) {
-			if (item == conn) {
-				continue;
-			}
-
-			int cflags = item->c.flags;
-			int sflags = item->s.flags;
-			int mflags = (TH_SYN| TH_FIN);
-			int s_established = (sflags & mflags) == TH_SYN;
-			int c_established = (cflags & mflags) == TH_SYN;
-			int timeout = (s_established && c_established)? establish_timeout(_tcp_pool._nat_count): 60;
-
-			if ((item->last_alive > now) ||
-					((cflags| sflags) & TH_RST) ||
-					(item->last_alive + timeout < now)) {
-				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _tcp_pool._nat_count, now, item->last_alive);
-				log_verbose("connection: cflags %x sflags %x fin %x rst %x\n", item->c.flags, item->s.flags, TH_FIN, TH_RST);
-				free_nat_port(&_tcp_pool, item->s.th_dport);
-				LIST_REMOVE(item, entry);
-				free(item);
-			}
-		}
-	}
+	conngc_ipv6(0, now, conn);
 
 	return conn;
 }
@@ -442,6 +458,108 @@ static nat_conntrack_ops ip6_conntrack_ops = {
 	.lookup = lookup_ipv6,
 	.newconn = newconn_ipv6
 };
+
+struct _sockaddr_union {
+	struct sockaddr_in in;
+	struct sockaddr_in6 in6;
+};
+
+static int tcpup_expand_dest(struct _sockaddr_union *sau, uint8_t *dsaddr, size_t dslen)
+{
+	int len;
+	uint8_t *p, buf[60];
+
+	p = dsaddr;
+	switch (*p) {
+		case RELAY_IPV4:
+			assert(*++p == 0);
+			memcpy(&sau->in.sin_port, p, 2);
+			p += 2;
+			memcpy(&sau->in.sin_addr, p, 4);
+			p += 4;
+			assert (sizeof(sau->in.sin_addr) == 4);
+			assert (sizeof(sau->in.sin_port) == 2);
+			assert (p == dsaddr + dslen);
+			break;
+
+		case RELAY_IPV6:
+			assert(*++p == 0);
+			memcpy(&sau->in6.sin6_port, p, 2);
+			p += 2;
+			memcpy(&sau->in6.sin6_addr, p, 16);
+			p += 16;
+			assert (sizeof(sau->in6.sin6_addr) == 16);
+			assert (sizeof(sau->in6.sin6_port) == 2);
+			assert (p == dsaddr + dslen);
+			break;
+
+		default:
+			assert(0);
+			break;
+	}
+
+	return 0;
+}
+
+static nat_conntrack_t * newconn_tcpup(struct tcpuphdr *hdr)
+{
+	time_t now;
+	uint16_t parts[2];
+
+	struct tcpupopt to;
+	struct _sockaddr_union sau;
+	nat_conntrack_t *conn, *item, *next;
+
+	now = time(NULL);
+	tcpup_dooptions(&to, (u_char *)(hdr + 1), (hdr->th_opten << 2));
+	if (!CHECK_FLAGS(to.to_flags, TOF_DESTINATION)) {
+		return NULL;
+	}
+
+	if (!tcpup_expand_dest(&sau, to.to_dsaddr, to.to_dslen)) {
+		return NULL;
+	}
+
+	conn = ALLOC_NEW(nat_conntrack_t);
+	if (conn != NULL) {
+		conn->last_alive = now;
+		conn->last_sent  = now;
+
+		memcpy(parts, &hdr->th_conv, 4);
+		conn->s.th_dport = parts[0];
+		conn->s.th_sport = parts[1];
+
+		log_verbose("new item %p\n", conn);
+		if (sau.in.sin_family == AF_INET) {
+			conn->s.ip_src.s_addr = hdr->th_conv;
+			conn->s.ip_dst.s_addr = hdr->th_conv;
+
+			conn->c.th_sport = sau.in.sin_port;
+			conn->c.ip_src   = sau.in.sin_addr;
+
+			conn->c.th_dport = parts[0];
+			conn->c.ip_dst.s_addr = htonl(parts[1]| 0xC0A80000);
+
+			conngc_ipv4(0, now, conn);
+			LIST_INSERT_HEAD(&_ipv4_header, conn, entry);
+		} else if (sau.in6.sin6_family == AF_INET6) {
+			conn->s.ip_src.s_addr = hdr->th_conv;
+			conn->s.ip_dst.s_addr = hdr->th_conv;
+
+			conn->c.th_dport = parts[0];
+			/* conn->c.ip6_dst  = htonl(parts[1]); */
+
+			conngc_ipv6(0, now, conn);
+			LIST_INSERT_HEAD(&_ipv6_header, conn, entry);
+		} else {
+			assert(0);
+		}
+	}
+
+	return conn;
+}
+
+static nat_conntrack_t * (*__so_newconn)(struct tcpuphdr *hdr) = newconn_tcpup;
 
 ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 {
@@ -726,6 +844,16 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 		conn = item;
 		goto found;
 	}
+
+#define TH_NEWCONN (TH_SYN| TH_ACK| TH_RST)
+	if (__so_newconn &&
+			TH_SYN == CHECK_FLAGS(up->th_flags, TH_NEWCONN)) {
+		conn = __so_newconn(up);
+		if (conn == NULL) {
+			goto found;
+		}
+	}
+#undef TH_NEWCONN
 
 	return tcpup_frag_rst(up, packet);
 
