@@ -472,7 +472,9 @@ static int tcpup_expand_dest(struct _sockaddr_union *sau, uint8_t *dsaddr, size_
 	p = dsaddr;
 	switch (*p) {
 		case RELAY_IPV4:
-			assert(*++p == 0);
+			assert(p[1] == 0);
+			sau->in.sin_family = AF_INET;
+			p += 2;
 			memcpy(&sau->in.sin_port, p, 2);
 			p += 2;
 			memcpy(&sau->in.sin_addr, p, 4);
@@ -483,7 +485,9 @@ static int tcpup_expand_dest(struct _sockaddr_union *sau, uint8_t *dsaddr, size_
 			break;
 
 		case RELAY_IPV6:
-			assert(*++p == 0);
+			assert(p[1] == 0);
+			sau->in6.sin6_family = AF_INET6;
+			p += 2;
 			memcpy(&sau->in6.sin6_port, p, 2);
 			p += 2;
 			memcpy(&sau->in6.sin6_addr, p, 16);
@@ -498,7 +502,7 @@ static int tcpup_expand_dest(struct _sockaddr_union *sau, uint8_t *dsaddr, size_
 			break;
 	}
 
-	return 0;
+	return 1;
 }
 
 static nat_conntrack_t * newconn_tcpup(struct tcpuphdr *hdr)
@@ -528,28 +532,35 @@ static nat_conntrack_t * newconn_tcpup(struct tcpuphdr *hdr)
 		memcpy(parts, &hdr->th_conv, 4);
 		conn->s.th_dport = parts[0];
 		conn->s.th_sport = parts[1];
+		conn->s.ip_src.s_addr = hdr->th_conv;
+		conn->s.ip_dst.s_addr = hdr->th_conv;
 
 		log_verbose("new item %p\n", conn);
 		if (sau.in.sin_family == AF_INET) {
-			conn->s.ip_src.s_addr = hdr->th_conv;
-			conn->s.ip_dst.s_addr = hdr->th_conv;
-
 			conn->c.th_sport = sau.in.sin_port;
 			conn->c.ip_src   = sau.in.sin_addr;
 
 			conn->c.th_dport = parts[0];
 			conn->c.ip_dst.s_addr = htonl(parts[1]| 0xC0A80000);
 
+			unsigned cksum = tcpip_checksum(0, &conn->c.ip_src, 4, 0);
+			conn->c.ip_sum = tcpip_checksum(cksum, &conn->c.ip_dst, 4, 0);
+
 			conngc_ipv4(0, now, conn);
+			conn->ops = (nat_conntrack_ops *)&ip_conntrack_ops;
 			LIST_INSERT_HEAD(&_ipv4_header, conn, entry);
 		} else if (sau.in6.sin6_family == AF_INET6) {
-			conn->s.ip_src.s_addr = hdr->th_conv;
-			conn->s.ip_dst.s_addr = hdr->th_conv;
+			conn->c.th_sport = sau.in6.sin6_port;
+			conn->c.ip6_src   = sau.in6.sin6_addr;
 
 			conn->c.th_dport = parts[0];
 			/* conn->c.ip6_dst  = htonl(parts[1]); */
 
+			unsigned cksum = tcpip_checksum(0, &conn->c.ip6_src, 16, 0);
+			conn->c.ip_sum = tcpip_checksum(cksum, &conn->c.ip6_dst, 16, 0);
+
 			conngc_ipv6(0, now, conn);
+			conn->ops = (nat_conntrack_ops *)&ip6_conntrack_ops;
 			LIST_INSERT_HEAD(&_ipv6_header, conn, entry);
 		} else {
 			assert(0);
@@ -849,7 +860,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 	if (__so_newconn &&
 			TH_SYN == CHECK_FLAGS(up->th_flags, TH_NEWCONN)) {
 		conn = __so_newconn(up);
-		if (conn == NULL) {
+		if (conn != NULL) {
 			goto found;
 		}
 	}

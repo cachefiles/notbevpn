@@ -294,7 +294,8 @@ int tcpup_dooptions(struct tcpupopt *to, u_char *cp, int cnt)
 			case TCPOPT_DESTINATION:
 				to->to_flags |= TOF_DESTINATION;
 				to->to_dsaddr = cp + 2;
-				to->to_dslen = optlen;
+				to->to_dslen = optlen - 2;
+				assert(optlen >= 2);
 				break;
 
 			case TCPOPT_SACK:

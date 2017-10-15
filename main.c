@@ -281,8 +281,13 @@ int main(int argc, char *argv[])
 			parse_sockaddr_in(&so_addr, argv[i + 1]);
 			i++;
 		} else {
-			parse_sockaddr_in(&ll_addr, argv[i]);
 			have_target = 1;
+			const char *server = argv[i];
+			if (strcmp(argv[i], "server") == 0) {
+				server = "8.8.8.8";
+				have_target = 2;
+			}
+			parse_sockaddr_in(&ll_addr, server);
 			continue;
 		}
 	}
@@ -419,6 +424,7 @@ int main(int argc, char *argv[])
 
 			if (len > 0) {
 				len = tcpup_frag_input(packet, len, 1500);
+				if (len <= 0 && have_target == 2) ll_addr = tmp_addr;
 				ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
 				LOG_VERBOSE("send_data: %d\n", ignore);
 			}
