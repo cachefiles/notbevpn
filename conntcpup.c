@@ -131,6 +131,7 @@ typedef struct _nat_conntrack_t {
 	int probe;
 	int last_dir;
 	int tcp_wscale;
+	int use_port;
 	time_t last_alive;
 	time_t last_sent;
 	time_t last_recv;
@@ -235,7 +236,7 @@ static int conngc_ipv4(int type, time_t now, nat_conntrack_t *skip)
 				log_verbose("free stream: %p total=%d idle=%ld %s:%d -> %s:%d, flags %x -> %x\n",
 						item, _tcp_pool._nat_count, now - item->last_alive,
 						P(&c->ip_src), htons(c->th_sport), P(&c->ip_dst), htons(c->th_dport), item->s.flags, item->c.flags);
-				free_nat_port(&_tcp_pool, item->s.th_dport);
+				if (item->use_port) free_nat_port(&_tcp_pool, item->s.th_dport);
 				LIST_REMOVE(item, entry);
 				free(item);
 			}
@@ -265,6 +266,7 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 
 		conn->last_alive = now;
 		conn->last_sent  = now;
+		conn->use_port   = 1;
 		conn->c.th_sport = sport;
 		conn->c.th_dport = dport;
 
@@ -376,7 +378,7 @@ static int conngc_ipv6(int type, time_t now, nat_conntrack_t *skip)
 					(item->last_alive + timeout < now)) {
 				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _tcp_pool._nat_count, now, item->last_alive);
 				log_verbose("connection: cflags %x sflags %x fin %x rst %x\n", item->c.flags, item->s.flags, TH_FIN, TH_RST);
-				free_nat_port(&_tcp_pool, item->s.th_dport);
+				if (item->use_port) free_nat_port(&_tcp_pool, item->s.th_dport);
 				LIST_REMOVE(item, entry);
 				free(item);
 			}
@@ -405,6 +407,7 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 
 		conn->last_alive = now;
 		conn->last_sent  = now;
+		conn->use_port   = 1;
 		conn->c.th_sport = sport;
 		conn->c.th_dport = dport;
 

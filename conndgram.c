@@ -108,6 +108,7 @@ static void alloc_nat_slot(udp_state_t *s, udp_state_t *c, uint16_t port)
 }
 
 typedef struct _nat_conntrack_t {
+	int use_port;
 	int last_meta;
 	time_t last_alive;
 
@@ -134,13 +135,18 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 
 	ip = (nat_iphdr_t *)packet;
 	LIST_FOREACH(item, &_ipv4_header, entry) {
-		if (item->c.th_dport != dport) {
-			continue;
-		}
-
-		if (item->c.ip_dst.s_addr == ip->ip_dst.s_addr) {
-			item->last_alive = time(NULL);
-			return item;
+		if (item->use_port) {
+			if ((item->c.th_sport == sport) &&
+					(item->c.ip_src.s_addr == ip->ip_src.s_addr)) {
+				item->last_alive = time(NULL);
+				return item;
+			}
+		} else {
+			if ((item->c.th_dport == dport) &&
+					(item->c.ip_dst.s_addr == ip->ip_dst.s_addr)) {
+				item->last_alive = time(NULL);
+				return item;
+			}
 		}
 	}
 
@@ -168,7 +174,7 @@ static int conngc_ipv4(int type, time_t now, nat_conntrack_t *skip)
 			if ((item->last_alive > now) ||
 					(item->last_alive + timeout < now)) {
 				log_verbose("free datagram connection: %p, %d\n", skip, _udp_pool._nat_count);
-				free_nat_port(&_udp_pool, item->s.th_dport);
+				if (item->use_port) free_nat_port(&_udp_pool, item->s.th_dport);
 				LIST_REMOVE(item, entry);
 				free(item);
 			}
@@ -196,6 +202,7 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 	if (conn != NULL) {
 		ip = (nat_iphdr_t *)packet;
 
+		conn->use_port = 1;
 		conn->last_alive = now;
 		conn->c.th_sport = sport;
 		conn->c.th_dport = dport;
@@ -264,13 +271,18 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 
 	ip = (nat_ip6hdr_t *)packet;
 	LIST_FOREACH(item, &_ipv6_header, entry) {
-		if (item->c.th_dport != dport) {
-			continue;
-		}
-
-		if (0 == memcmp(&item->c.ip6_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
-			item->last_alive = time(NULL);
-			return item;
+		if (item->use_port) {
+			if ((item->c.th_sport == sport) &&
+					0 == memcmp(&item->c.ip6_src, &ip->ip6_src, sizeof(ip->ip6_src))) {
+				item->last_alive = time(NULL);
+				return item;
+			}
+		} else {
+			if ((item->c.th_dport == dport) &&
+					0 == memcmp(&item->c.ip6_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
+				item->last_alive = time(NULL);
+				return item;
+			}
 		}
 	}
 
@@ -295,7 +307,7 @@ static int conngc_ipv6(int type, time_t now, nat_conntrack_t *skip)
 			if ((item->last_alive > now) ||
 					(item->last_alive + timeout < now)) {
 				log_verbose("free datagram connection: %p, %d\n", skip, _udp_pool._nat_count);
-				free_nat_port(&_udp_pool, item->s.th_dport);
+				if (item->use_port) free_nat_port(&_udp_pool, item->s.th_dport);
 				LIST_REMOVE(item, entry);
 				free(item);
 			}
@@ -369,8 +381,11 @@ static nat_conntrack_ops ip6_conntrack_ops = {
 	.newconn = newconn_ipv6
 };
 
-#define TAG_IPV4 0x84
-#define TAG_IPV6 0x86
+#define TAG_SRC_IPV4 0x14
+#define TAG_SRC_IPV6 0x16
+
+#define TAG_DST_IPV4 0x84
+#define TAG_DST_IPV6 0x86
 
 static nat_conntrack_t * newconn_tcpup(struct udpuphdr4 *hdr)
 {
@@ -379,8 +394,8 @@ static nat_conntrack_t * newconn_tcpup(struct udpuphdr4 *hdr)
 	nat_conntrack_t *conn;
 
 	now = time(NULL);
-	if (hdr->uh_tag != TAG_IPV4
-			&& hdr->uh_tag != TAG_IPV6) {
+	if (hdr->uh_tag != TAG_DST_IPV4
+			&& hdr->uh_tag != TAG_DST_IPV6) {
 		return NULL;
 	}
 
@@ -395,26 +410,18 @@ static nat_conntrack_t * newconn_tcpup(struct udpuphdr4 *hdr)
 		conn->s.ip_src.s_addr = hdr->uh.u_conv;
 		conn->s.ip_dst.s_addr = hdr->uh.u_conv;
 
-		if (hdr->uh_tag == TAG_IPV4) {
+		if (hdr->uh_tag == TAG_DST_IPV4) {
 			conn->c.th_dport = parts[0];
 			conn->c.ip_dst.s_addr = htonl(parts[1]| 0xC0A80000);
-
-#if 0
-			unsigned cksum = tcpip_checksum(0, &conn->c.ip_src, 4, 0);
-			conn->c.ip_sum = tcpip_checksum(cksum, &conn->c.ip_dst, 4, 0);
-#endif
 
 			conngc_ipv4(0, now, conn);
 			conn->ops = (nat_conntrack_ops *)&ip_conntrack_ops;
 			LIST_INSERT_HEAD(&_ipv4_header, conn, entry);
-		} else if (hdr->uh_tag == TAG_IPV6) {
+		} else if (hdr->uh_tag == TAG_DST_IPV6) {
 #if 0
-			conn->c.th_dport = parts[0];
-			/* conn->c.ip6_dst  = htonl(parts[1]); */
+			conn->c.th_sport = parts[0];
+			/* conn->c.ip6_src  = htonl(parts[1]); */
 #endif
-
-			unsigned cksum = tcpip_checksum(0, &conn->c.ip6_src, 16, 0);
-			conn->c.ip_sum = tcpip_checksum(cksum, &conn->c.ip6_dst, 16, 0);
 
 			conngc_ipv6(0, now, conn);
 			conn->ops = (nat_conntrack_ops *)&ip6_conntrack_ops;
@@ -451,9 +458,15 @@ static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *
 	up->uh.u_doff = (sizeof(*up) >> 2);
 
 	up->uh_len  = (sizeof(*up) - sizeof(up->uh));
-	up->uh_tag  = TAG_IPV4;
-	up->uh_dport = uh->uh_sport;
-	memcpy(up->uh_daddr, &ip->ip_src, 4);
+	if (conn->use_port) {
+		up->uh_tag  = TAG_DST_IPV4;
+		up->uh_dport = uh->uh_dport;
+		memcpy(up->uh_daddr, &ip->ip_dst, 4);
+	} else {
+		up->uh_tag  = TAG_SRC_IPV4;
+		up->uh_dport = uh->uh_sport;
+		memcpy(up->uh_daddr, &ip->ip_src, 4);
+	}
 	
 	data_start = (uint8_t *)(uh + 1);
 	count = (packet + len - data_start);
@@ -485,9 +498,15 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 	up->uh.u_doff = (sizeof(*up) >> 2);
 
 	up->uh_len  = (sizeof(*up) - sizeof(up->uh));
-	up->uh_tag  = TAG_IPV6;
-	up->uh_dport = uh->uh_sport;
-	memcpy(up->uh_daddr, &ip->ip6_src, 16);
+	if (conn->use_port) {
+		up->uh_tag  = TAG_DST_IPV6;
+		up->uh_dport = uh->uh_dport;
+		memcpy(up->uh_daddr, &ip->ip6_dst, 16);
+	} else {
+		up->uh_tag  = TAG_SRC_IPV6;
+		up->uh_dport = uh->uh_sport;
+		memcpy(up->uh_daddr, &ip->ip6_src, 16);
+	}
 	
 	data_start = (uint8_t *)(uh + 1);
 	count = (packet + len - data_start);
@@ -511,17 +530,31 @@ static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 
 	while (optlen > 1) {
 		switch (*optp) {
-			case TAG_IPV4:
+			case TAG_DST_IPV4:
 				assert(optlen >= 8 && optp[1] == 8);
-				memcpy(&conn->c.th_sport, optp + 2, sizeof(conn->c.th_dport));
-				memcpy(&conn->c.ip_src, optp + 4, sizeof(conn->c.ip_dst));
+				memcpy(&conn->c.th_sport, optp + 2, sizeof(conn->c.th_sport));
+				memcpy(&conn->c.ip_src, optp + 4, sizeof(conn->c.ip_src));
 				is_ipv4 = 1;
 				break;
 
-			case TAG_IPV6:
+			case TAG_DST_IPV6:
 				assert(optlen >= 20 && optp[1] == 20);
-				memcpy(&conn->c.th_sport, optp + 2, sizeof(conn->c.th_dport));
-				memcpy(&conn->c.ip6_src, optp + 4, sizeof(conn->c.ip6_dst));
+				memcpy(&conn->c.th_sport, optp + 2, sizeof(conn->c.th_sport));
+				memcpy(&conn->c.ip6_src, optp + 4, sizeof(conn->c.ip6_src));
+				is_ipv6 = 1;
+				break;
+
+			case TAG_SRC_IPV4:
+				assert(optlen >= 8 && optp[1] == 8);
+				memcpy(&conn->c.th_dport, optp + 2, sizeof(conn->c.th_dport));
+				memcpy(&conn->c.ip_dst, optp + 4, sizeof(conn->c.ip_dst));
+				is_ipv4 = 1;
+				break;
+
+			case TAG_SRC_IPV6:
+				assert(optlen >= 20 && optp[1] == 20);
+				memcpy(&conn->c.th_dport, optp + 2, sizeof(conn->c.th_dport));
+				memcpy(&conn->c.ip6_dst, optp + 4, sizeof(conn->c.ip6_dst));
 				is_ipv6 = 1;
 				break;
 
