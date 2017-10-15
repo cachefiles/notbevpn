@@ -49,6 +49,7 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 #define CHECK_NAT_FAIL_RETURN(expr) do { if (expr); else return 0; } while (0)
 
 #define CHECK_FLAGS(flags, want) ((flags) & (want))
+
 #define xchg(s, d, t) { t _t = d; d = s; s = _t; } 
 
 struct udpuphdr {
@@ -133,11 +134,11 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 
 	ip = (nat_iphdr_t *)packet;
 	LIST_FOREACH(item, &_ipv4_header, entry) {
-		if (item->c.th_sport != sport) {
+		if (item->c.th_dport != dport) {
 			continue;
 		}
 
-		if (item->c.ip_src.s_addr == ip->ip_src.s_addr) {
+		if (item->c.ip_dst.s_addr == ip->ip_dst.s_addr) {
 			item->last_alive = time(NULL);
 			return item;
 		}
@@ -148,6 +149,34 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 
 #define P(x) ip2text(x)
 const char *ip2text(struct in_addr *ip);
+
+static int conngc_ipv4(int type, time_t now, nat_conntrack_t *skip)
+{
+	if (now < _ipv4_gc_time || now > _ipv4_gc_time + 30) {
+		nat_conntrack_t *item, *next;
+
+		_ipv4_gc_time = now;
+		LIST_FOREACH_SAFE(item, &_ipv4_header, entry, next) {
+			if (item == skip) {
+				continue;
+			}
+
+			int timeout = 30;
+			if (item->c.ttl > 3) timeout += 150;
+			if (item->s.ttl > 3) timeout += 150;
+
+			if ((item->last_alive > now) ||
+					(item->last_alive + timeout < now)) {
+				log_verbose("free datagram connection: %p, %d\n", skip, _udp_pool._nat_count);
+				free_nat_port(&_udp_pool, item->s.th_dport);
+				LIST_REMOVE(item, entry);
+				free(item);
+			}
+		}
+	}
+
+	return 0;
+}
 
 static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t dport)
 {
@@ -185,28 +214,7 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 	}
 
 free_conn:
-	if (now < _ipv4_gc_time || now > _ipv4_gc_time + 30) {
-		nat_conntrack_t *item, *next;
-
-		_ipv4_gc_time = now;
-		LIST_FOREACH_SAFE(item, &_ipv4_header, entry, next) {
-			if (item == conn) {
-				continue;
-			}
-
-			int timeout = 30;
-			if (item->c.ttl > 3) timeout += 150;
-			if (item->s.ttl > 3) timeout += 150;
-
-			if ((item->last_alive > now) ||
-					(item->last_alive + timeout < now)) {
-				log_verbose("free datagram connection: %p, %d\n", conn, _udp_pool._nat_count);
-				free_nat_port(&_udp_pool, item->s.th_dport);
-				LIST_REMOVE(item, entry);
-				free(item);
-			}
-		}
-	}
+	conngc_ipv4(0, now, conn);
 
 	return conn;
 }
@@ -256,17 +264,45 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 
 	ip = (nat_ip6hdr_t *)packet;
 	LIST_FOREACH(item, &_ipv6_header, entry) {
-		if (item->c.th_sport != sport) {
+		if (item->c.th_dport != dport) {
 			continue;
 		}
 
-		if (0 == memcmp(&item->c.ip6_src, &ip->ip6_src, sizeof(ip->ip6_src))) {
+		if (0 == memcmp(&item->c.ip6_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
 			item->last_alive = time(NULL);
 			return item;
 		}
 	}
 
 	return NULL;
+}
+
+static int conngc_ipv6(int type, time_t now, nat_conntrack_t *skip)
+{
+	if (now < _ipv6_gc_time || now > _ipv6_gc_time + 30) {
+		nat_conntrack_t *item, *next;
+
+		_ipv6_gc_time = now;
+		LIST_FOREACH_SAFE(item, &_ipv6_header, entry, next) {
+			if (item == skip) {
+				continue;
+			}
+
+			int timeout = 30;
+			if (item->c.ttl > 10) timeout += 60;
+			if (item->s.ttl > 10) timeout += 60;
+
+			if ((item->last_alive > now) ||
+					(item->last_alive + timeout < now)) {
+				log_verbose("free datagram connection: %p, %d\n", skip, _udp_pool._nat_count);
+				free_nat_port(&_udp_pool, item->s.th_dport);
+				LIST_REMOVE(item, entry);
+				free(item);
+			}
+		}
+	}
+
+	return 0;
 }
 
 static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t dport)
@@ -301,29 +337,7 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 	}
 
 free_conn:
-	if (now < _ipv6_gc_time || now > _ipv6_gc_time + 30) {
-		nat_conntrack_t *item, *next;
-
-		_ipv6_gc_time = now;
-		LIST_FOREACH_SAFE(item, &_ipv6_header, entry, next) {
-			if (item == conn) {
-				continue;
-			}
-
-			int timeout = 30;
-			if (item->c.ttl > 10) timeout += 60;
-			if (item->s.ttl > 10) timeout += 60;
-
-			if ((item->last_alive > now) ||
-					(item->last_alive + timeout < now)) {
-				log_verbose("free datagram connection: %p, %d\n", conn, _udp_pool._nat_count);
-				free_nat_port(&_udp_pool, item->s.th_dport);
-				LIST_REMOVE(item, entry);
-				free(item);
-			}
-		}
-	}
-
+	conngc_ipv6(0, now, conn);
 	return conn;
 }
 
@@ -358,6 +372,65 @@ static nat_conntrack_ops ip6_conntrack_ops = {
 #define TAG_IPV4 0x84
 #define TAG_IPV6 0x86
 
+static nat_conntrack_t * newconn_tcpup(struct udpuphdr4 *hdr)
+{
+	time_t now;
+	uint16_t parts[2];
+	nat_conntrack_t *conn;
+
+	now = time(NULL);
+	if (hdr->uh_tag != TAG_IPV4
+			&& hdr->uh_tag != TAG_IPV6) {
+		return NULL;
+	}
+
+	conn = ALLOC_NEW(nat_conntrack_t);
+
+	if (conn != NULL) {
+		conn->last_alive = now;
+
+		memcpy(parts, &hdr->uh.u_conv, 4);
+		conn->s.th_dport = parts[0];
+		conn->s.th_sport = parts[1];
+		conn->s.ip_src.s_addr = hdr->uh.u_conv;
+		conn->s.ip_dst.s_addr = hdr->uh.u_conv;
+
+		if (hdr->uh_tag == TAG_IPV4) {
+			conn->c.th_dport = parts[0];
+			conn->c.ip_dst.s_addr = htonl(parts[1]| 0xC0A80000);
+
+#if 0
+			unsigned cksum = tcpip_checksum(0, &conn->c.ip_src, 4, 0);
+			conn->c.ip_sum = tcpip_checksum(cksum, &conn->c.ip_dst, 4, 0);
+#endif
+
+			conngc_ipv4(0, now, conn);
+			conn->ops = (nat_conntrack_ops *)&ip_conntrack_ops;
+			LIST_INSERT_HEAD(&_ipv4_header, conn, entry);
+		} else if (hdr->uh_tag == TAG_IPV6) {
+#if 0
+			conn->c.th_dport = parts[0];
+			/* conn->c.ip6_dst  = htonl(parts[1]); */
+#endif
+
+			unsigned cksum = tcpip_checksum(0, &conn->c.ip6_src, 16, 0);
+			conn->c.ip_sum = tcpip_checksum(cksum, &conn->c.ip6_dst, 16, 0);
+
+			conngc_ipv6(0, now, conn);
+			conn->ops = (nat_conntrack_ops *)&ip6_conntrack_ops;
+			LIST_INSERT_HEAD(&_ipv6_header, conn, entry);
+		} else {
+			assert(0);
+		}
+	}
+
+free_conn:
+	log_verbose("newconn: %p\n", conn);
+	return conn;
+}
+
+static nat_conntrack_t * (*__so_newconn)(struct udpuphdr4 *hdr) = newconn_tcpup;
+
 static uint32_t _proto_tag[2] = {};
 static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *ops, nat_udphdr_t *uh, uint8_t *packet, size_t len, uint8_t *buf, size_t limit)
 {
@@ -379,8 +452,8 @@ static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *
 
 	up->uh_len  = (sizeof(*up) - sizeof(up->uh));
 	up->uh_tag  = TAG_IPV4;
-	up->uh_dport = uh->uh_dport;
-	memcpy(up->uh_daddr, &ip->ip_dst, 4);
+	up->uh_dport = uh->uh_sport;
+	memcpy(up->uh_daddr, &ip->ip_src, 4);
 	
 	data_start = (uint8_t *)(uh + 1);
 	count = (packet + len - data_start);
@@ -413,8 +486,8 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 
 	up->uh_len  = (sizeof(*up) - sizeof(up->uh));
 	up->uh_tag  = TAG_IPV6;
-	up->uh_dport = uh->uh_dport;
-	memcpy(up->uh_daddr, &ip->ip6_dst, 16);
+	up->uh_dport = uh->uh_sport;
+	memcpy(up->uh_daddr, &ip->ip6_src, 16);
 	
 	data_start = (uint8_t *)(uh + 1);
 	count = (packet + len - data_start);
@@ -440,15 +513,15 @@ static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 		switch (*optp) {
 			case TAG_IPV4:
 				assert(optlen >= 8 && optp[1] == 8);
-				memcpy(&conn->c.th_dport, optp + 2, sizeof(conn->c.th_dport));
-				memcpy(&conn->c.ip_dst, optp + 4, sizeof(conn->c.ip_dst));
+				memcpy(&conn->c.th_sport, optp + 2, sizeof(conn->c.th_dport));
+				memcpy(&conn->c.ip_src, optp + 4, sizeof(conn->c.ip_dst));
 				is_ipv4 = 1;
 				break;
 
 			case TAG_IPV6:
 				assert(optlen >= 20 && optp[1] == 20);
-				memcpy(&conn->c.th_dport, optp + 2, sizeof(conn->c.th_dport));
-				memcpy(&conn->c.ip6_dst, optp + 4, sizeof(conn->c.ip6_dst));
+				memcpy(&conn->c.th_sport, optp + 2, sizeof(conn->c.th_dport));
+				memcpy(&conn->c.ip6_src, optp + 4, sizeof(conn->c.ip6_dst));
 				is_ipv6 = 1;
 				break;
 
@@ -530,6 +603,13 @@ ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 		item->last_alive = time(NULL);
 		conn = item;
 		goto found;
+	}
+
+	if (__so_newconn) {
+		conn = __so_newconn(up);
+		if (conn != NULL) {
+			goto found;
+		}
 	}
 
 	return 0;
