@@ -531,6 +531,7 @@ static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 	while (optlen > 1) {
 		switch (*optp) {
 			case TAG_DST_IPV4:
+				if (conn->use_port) break;
 				assert(optlen >= 8 && optp[1] == 8);
 				memcpy(&conn->c.th_sport, optp + 2, sizeof(conn->c.th_sport));
 				memcpy(&conn->c.ip_src, optp + 4, sizeof(conn->c.ip_src));
@@ -538,6 +539,7 @@ static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 				break;
 
 			case TAG_DST_IPV6:
+				if (conn->use_port) break;
 				assert(optlen >= 20 && optp[1] == 20);
 				memcpy(&conn->c.th_sport, optp + 2, sizeof(conn->c.th_sport));
 				memcpy(&conn->c.ip6_src, optp + 4, sizeof(conn->c.ip6_src));
@@ -545,6 +547,7 @@ static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 				break;
 
 			case TAG_SRC_IPV4:
+				if (!conn->use_port) break;
 				assert(optlen >= 8 && optp[1] == 8);
 				memcpy(&conn->c.th_dport, optp + 2, sizeof(conn->c.th_dport));
 				memcpy(&conn->c.ip_dst, optp + 4, sizeof(conn->c.ip_dst));
@@ -552,6 +555,7 @@ static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 				break;
 
 			case TAG_SRC_IPV6:
+				if (!conn->use_port) break;
 				assert(optlen >= 20 && optp[1] == 20);
 				memcpy(&conn->c.th_dport, optp + 2, sizeof(conn->c.th_dport));
 				memcpy(&conn->c.ip6_dst, optp + 4, sizeof(conn->c.ip6_dst));
