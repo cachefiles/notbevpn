@@ -22,8 +22,8 @@
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
-int check_blocked(int tunfd, unsigned char *packet, size_t len, time_t *limited);
-int check_blocked_normal(int tunfd, unsigned char *packet, size_t len);
+int check_blocked(int tunfd, char *packet, size_t len, time_t *limited);
+int check_blocked_normal(int tunfd, char *packet, size_t len);
 
 char * get_tcpup_data(int *len);
 char * get_tcpip_data(int *len);
@@ -64,7 +64,7 @@ static int check_link_failure(int txretval)
 	return 0;
 }
 
-static int is_blocked(int tunfd, unsigned char *packet, size_t len)
+static int is_blocked(int tunfd, char *packet, size_t len)
 {
 	int time_check = 0;
 	time_t time_current = 0;
@@ -264,7 +264,7 @@ static int bind_last_address(int netfd, int which)
 		goto ignore_error;
 	}
 
-	size_t slen = sizeof(sin_addr);
+	socklen_t slen = sizeof(sin_addr);
 	error = getsockname(netfd, (struct sockaddr *)&_last_bind[which], &slen);
 	LOG_DEBUG("getsockname: %s:%d, error = %d\n",
 			inet_ntoa(sin_addr.sin_addr), htons(sin_addr.sin_port), error);

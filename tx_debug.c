@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <time.h>
+#include <features.h>
 #include <sys/time.h>
 
 #ifdef __linux__

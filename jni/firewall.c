@@ -84,7 +84,7 @@ static uint32_t _track_bits_1[65536 / 32] = {};
 static uint32_t _track_bits_0[65536 / 32] = {};
 static uint32_t _track_bits_2[65536 / 32] = {};
 
-static int conntrack_tcp_nat(nat_tcphdr_t *th, unsigned char *packet, size_t len)
+static int conntrack_tcp_nat(nat_tcphdr_t *th, char *packet, size_t len)
 {
 	nat_iphdr_t * ip = (nat_iphdr_t *)packet;
 
@@ -205,7 +205,7 @@ static int conntrack_tcp_lookup(nat_iphdr_t *ip, nat_tcphdr_t *th)
 	return 0;
 }
 
-static int conntrack_tcp_new(nat_tcphdr_t *th, unsigned char *packet, size_t len)
+static int conntrack_tcp_new(nat_tcphdr_t *th, char *packet, size_t len)
 {
 	int count;
 	nat_iphdr_t * ip = (nat_iphdr_t *)packet;
@@ -221,7 +221,7 @@ static int conntrack_tcp_new(nat_tcphdr_t *th, unsigned char *packet, size_t len
 	return count;
 }
 
-int check_blocked(int tunfd, unsigned char *packet, size_t len, time_t *limited)
+int check_blocked(int tunfd, char *packet, size_t len, time_t *limited)
 {
 	ssize_t count; 
 	time_t current;
@@ -258,7 +258,7 @@ int check_blocked(int tunfd, unsigned char *packet, size_t len, time_t *limited)
 					if (is_google_net(ip->ip_dst)) {
 						LOG_DEBUG("active!%d tcp/%d to: :%d -> %s\n",
 								tunfd, htons(th->th_dport), htons(th->th_sport), inet_ntoa(ip->ip_dst));
-						time(limited);
+						/* time(limited); */
 						break;
 					}
 
@@ -303,7 +303,7 @@ int check_blocked(int tunfd, unsigned char *packet, size_t len, time_t *limited)
 	return 0;
 }
 
-int check_blocked_normal(int tunfd, unsigned char *packet, size_t len)
+int check_blocked_normal(int tunfd, char *packet, size_t len)
 {
 	nat_iphdr_t *ip;
 
