@@ -16,6 +16,7 @@
 #include <sys/select.h>
 
 #include <base_link.h>
+#include "conversation.h"
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
@@ -433,6 +434,7 @@ int main(int argc, char *argv[])
 			if (packet != NULL) {
 				len = tun_write(tunfd, packet, len);
 				LOG_VERBOSE("tun_write: %d\n", len);
+				push_conversation(SOT(&tmp_addr), tmp_alen);
 			}
 		}
 
@@ -456,7 +458,8 @@ int main(int argc, char *argv[])
 
 			packet = get_tcpup_data(&len);
 			if (packet != NULL) {
-				(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+				struct sockaddr *target = pull_conversation(SOT(&ll_addr), sizeof(ll_addr));
+				(*link_ops->send_data)(netfd, packet, len, target, sizeof(ll_addr));
 				last_track_enable = 1;
 				LOG_VERBOSE("send_data: %d\n", len);
 			}

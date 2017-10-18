@@ -28,6 +28,7 @@
 
 #include "tx_debug.h"
 #include "portpool.h"
+#include "conversation.h"
 
 typedef unsigned char uint8_t;
 
@@ -136,6 +137,7 @@ typedef struct _nat_conntrack_t {
 	time_t last_sent;
 	time_t last_recv;
 	void *ops;
+	void *udata;
 
 	int track_len;
 	int track_round;
@@ -544,7 +546,7 @@ static nat_conntrack_t * newconn_tcpup(struct tcpuphdr *hdr)
 			conn->c.ip_src   = sau.in.sin_addr;
 
 			conn->c.th_dport = parts[0];
-			conn->c.ip_dst.s_addr = htonl(parts[1]| 0xC0A80000);
+			conn->c.ip_dst.s_addr = htonl(parts[1]| 0x64400000);
 
 			unsigned cksum = tcpip_checksum(0, &conn->c.ip_src, 4, 0);
 			conn->c.ip_sum = tcpip_checksum(cksum, &conn->c.ip_dst, 4, 0);
@@ -832,6 +834,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 	nat_conntrack_t *item, *conn = NULL;
 
 	up = (struct tcpuphdr *)packet;
+	set_conversation(0, NULL);
 	if (up->th_conv == htonl(TCPUP_PROTO_UDP)) {
 		_tcpip_len = udpup_frag_input(packet, len, (uint8_t *)_tcp_buf, sizeof(_tcp_buf));
 		return 0;
@@ -875,6 +878,7 @@ found:
 	ops = (nat_conntrack_ops *)conn->ops;
 	handle_server_to_client(conn, ops, up, packet, len);
 	conn->s.flags |= up->th_flags;
+	set_conversation(conn->s.ip_src.s_addr, &conn->udata);
 
 	return 0;
 }
@@ -892,6 +896,7 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 
 	ip = (nat_iphdr_t *)packet; 
 
+	set_conversation(0, NULL);
 	if (ip->ip_v == VERSION_IPV4) {
 		ip6 = NULL;
 		if (ip->ip_p == IPPROTO_UDP) goto process_udp;
@@ -938,6 +943,7 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 
 	handle_client_to_server(conn, ops, th, packet, len);
 	conn->c.flags |= th->th_flags;
+	set_conversation(conn->s.ip_src.s_addr, &conn->udata);
 	return 0;
 
 process_udp:

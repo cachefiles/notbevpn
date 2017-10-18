@@ -29,6 +29,7 @@
 
 #include "tx_debug.h"
 #include "portpool.h"
+#include "conversation.h"
 
 typedef unsigned char uint8_t;
 
@@ -113,6 +114,7 @@ typedef struct _nat_conntrack_t {
 	time_t last_alive;
 
 	void *ops;
+	void *udata;
 	udp_state_t c; /* client side tcp state */
 	udp_state_t s; /* server side tcp state */
 	LIST_ENTRY(_nat_conntrack_t) entry;
@@ -412,7 +414,7 @@ static nat_conntrack_t * newconn_tcpup(struct udpuphdr4 *hdr)
 
 		if (hdr->uh_tag == TAG_DST_IPV4) {
 			conn->c.th_dport = parts[0];
-			conn->c.ip_dst.s_addr = htonl(parts[1]| 0xC0A80000);
+			conn->c.ip_dst.s_addr = htonl(parts[1]| 0x64400000);
 
 			conngc_ipv4(0, now, conn);
 			conn->ops = (nat_conntrack_ops *)&ip_conntrack_ops;
@@ -653,6 +655,7 @@ ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 
 found:
 	ops = (nat_conntrack_ops *)conn->ops;
+	set_conversation(conn->s.ip_src.s_addr, &conn->udata);
 	return handle_server_to_client(conn, ops, up, packet, len, buf, limit);
 }
 
@@ -691,6 +694,7 @@ ssize_t udpip_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 		conn->ops = ops;
 	}
 
+	set_conversation(conn->s.ip_src.s_addr, &conn->udata);
 	if (ops == &ip_conntrack_ops) {
 		return handle_client_to_server_v4(conn, ops, uh, packet, len, buf, limit);
 	} else if (ops == &ip6_conntrack_ops) {
