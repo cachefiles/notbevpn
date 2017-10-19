@@ -199,10 +199,18 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 		goto free_conn;
 	}
 
+	ip = (nat_iphdr_t *)packet;
+	uint32_t ip_src_xor = htonl(ip->ip_src.s_addr)^0x64400001;
+
+	if (ip_src_xor != 0 && (ip_src_xor & ~0xffff) == 0) {
+		log_verbose("loop detected: %s:%d -> %s:%d", P(&ip->ip_src), htons(sport), P(&ip->ip_dst), htons(dport));
+		conn = NULL;
+		goto free_conn;
+	}
+
 	conn = ALLOC_NEW(nat_conntrack_t);
 
 	if (conn != NULL) {
-		ip = (nat_iphdr_t *)packet;
 
 		conn->use_port = 1;
 		conn->last_alive = now;
@@ -690,7 +698,7 @@ ssize_t udpip_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 	conn = (*ops->lookup)(packet, uh->uh_sport, uh->uh_dport);
 	if (conn == NULL) {
 		conn = (*ops->newconn)(packet, uh->uh_sport, uh->uh_dport);
-		assert(conn != NULL);
+		if (conn == NULL) return 0;
 		conn->ops = ops;
 	}
 
