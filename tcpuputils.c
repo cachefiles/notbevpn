@@ -492,7 +492,7 @@ int tcp_checksum(unsigned cksum, void *buf, size_t len)
         cksum1 = (cksum >> 16);
     }
 
-    return (~cksum);
+    return (~cksum) & 0xffff;
 }
 
 int udp_checksum(unsigned cksum, void *buf, size_t len)
@@ -507,6 +507,6 @@ int udp_checksum(unsigned cksum, void *buf, size_t len)
         cksum1 = (cksum >> 16);
     }
 
-    return (~cksum);
+    return (~cksum) & 0xffff;
 }
 
