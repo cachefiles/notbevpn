@@ -4,17 +4,10 @@
 #include <errno.h>
 #include <assert.h>
 #include <ctype.h>
-#include <netdb.h>
 #include <time.h>
 #include <signal.h>
 
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/ioctl.h>
-#include <fcntl.h>
-#include <arpa/inet.h>
-#include <sys/select.h>
-
+#include <config.h>
 #include <base_link.h>
 
 #define LEN_PADDING_ICMP sizeof(struct icmphdr)
@@ -115,9 +108,7 @@ static int icmp_low_link_create(void)
 	setsockopt(devfd, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
 	setsockopt(devfd, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
 
-	flags = fcntl(devfd, F_GETFL);
-	flags = fcntl(devfd, F_SETFL, flags| O_NONBLOCK);
-
+	setblockopt(devfd, 0);
 	return devfd;
 }
 

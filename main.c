@@ -4,19 +4,17 @@
 #include <errno.h>
 #include <assert.h>
 #include <ctype.h>
-#include <netdb.h>
 #include <time.h>
 #include <signal.h>
 
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/ioctl.h>
-#include <fcntl.h>
-#include <arpa/inet.h>
-#include <sys/select.h>
-
+#include <config.h>
 #include <base_link.h>
 #include "conversation.h"
+
+#ifndef EMSGSIZE
+#define EMSGSIZE -100
+#define SIGHUP SIGINT
+#endif
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
@@ -341,11 +339,8 @@ int main(int argc, char *argv[])
 
 	signal(SIGHUP, handle_reload);
 
-	int flags = fcntl(netfd, F_GETFL, 0);
-	fcntl(netfd, F_SETFL, flags | O_NONBLOCK);
-
-	flags = fcntl(tunfd, F_GETFL, 0);
-	fcntl(tunfd, F_SETFL, flags | O_NONBLOCK);
+	setblockopt(netfd, 0);
+	setblockopt(tunfd, 0);
 
 	int nready = 0;
 	fd_set readfds;
@@ -396,8 +391,7 @@ int main(int argc, char *argv[])
 						if (bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
 							close(netfd);
 							netfd = newfd;
-							flags = fcntl(netfd, F_GETFL, 0);
-							fcntl(netfd, F_SETFL, flags | O_NONBLOCK);
+							setblockopt(netfd, 0);
 							_reload = 0;
 						} else {
 							LOG_DEBUG("bindto: %s:%d\n", inet_ntoa(so_addr.sin_addr), htons(so_addr.sin_port));

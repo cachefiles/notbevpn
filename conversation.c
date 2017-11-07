@@ -3,8 +3,8 @@
 #include <string.h>
 #include <assert.h>
 #include <sys/types.h>
-#include <arpa/inet.h>
 
+#include <config.h>
 #include <base_link.h>
 #include <conversation.h>
 

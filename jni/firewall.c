@@ -3,30 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/types.h>
-#include <assert.h>
 
-#ifdef __linux__
-#define __BSD_VISIBLE 1
-#define __packed    __attribute__((__packed__))
-#define __aligned(x)    __attribute__((__aligned__(x)))
-#include <bsd/queue.h>
-#include <bsdinet/ip.h>
-#include <bsdinet/ip6.h>
-#include <bsdinet/udp.h>
-#include <bsdinet/tcp.h>
-#endif
-
-#ifndef __BSD_VISIBLE
-#include <sys/queue.h>
-#include <netinet/ip.h>
-#include <netinet/ip6.h>
-#include <netinet/udp.h>
-#include <netinet/tcp.h>
-#endif
-
+#include <config.h>
 #include <base_link.h>
 #include <bsdinet/tcpup.h>
 #include <router.h>

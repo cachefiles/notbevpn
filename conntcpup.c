@@ -4,26 +4,9 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <unistd.h>
-#include <arpa/inet.h>
 #include <sys/types.h>
 
-#ifdef __linux__
-#define __BSD_VISIBLE 1
-#define	__packed	__attribute__((__packed__))
-#define	__aligned(x)	__attribute__((__aligned__(x)))
-#include <bsd/queue.h>
-#include <bsdinet/ip.h>
-#include <bsdinet/ip6.h>
-#include <bsdinet/tcp.h>
-#endif
-
-#ifndef __BSD_VISIBLE
-#include <sys/queue.h>
-#include <netinet/ip.h>
-#include <netinet/ip6.h>
-#include <netinet/tcp.h>
-#endif
-
+#include "config.h"
 #include <bsdinet/tcpup.h>
 
 #include "tx_debug.h"
@@ -210,7 +193,11 @@ const char *ip2text(struct in_addr *ip)
 	static int _si = 0;
 	static char sbuf[4][16] = {};
 	char *_sbuf = sbuf[_si++ % 4];
+#ifndef WIN32
 	return inet_ntop(AF_INET, ip, _sbuf, 16);
+#else
+	return inet_ntoa(*ip);
+#endif
 }
 
 static int conngc_ipv4(int type, time_t now, nat_conntrack_t *skip)

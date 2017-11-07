@@ -1,5 +1,6 @@
 #ifndef _PORTPOOL_H_
 #define _PORTPOOL_H_
+#include <stdint.h>
 
 typedef struct port_pool_s {
 	int _nat_count;

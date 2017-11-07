@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
-#include <arpa/inet.h>
 
 #include "portpool.h"
 

@@ -1,7 +1,14 @@
 #ifndef _BASE_LINK_H_
 #define _BASE_LINK_H_
 
+#include <stdint.h>
+#ifdef WIN32
+#include <winsock.h>
+typedef int socklen_t;
+#define MSG_DONTWAIT 0
+#else
 #include <sys/socket.h>
+#endif
 
 int packet_decrypt(unsigned short key, void *dst, const void *src, size_t len);
 int packet_encrypt(unsigned short key, void *dst, const void *src, size_t len);
@@ -38,4 +45,5 @@ struct low_link_ops {
 	int (*recv_data)(int devfd, void *buf, size_t len, struct sockaddr *ll_addr, socklen_t *ll_len);
 };
 
+int setblockopt(int fd, int block);
 #endif

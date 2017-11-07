@@ -54,3 +54,15 @@ int tun_write(int fd, void *buf, size_t len)
 {
     return write(fd, buf, len);
 }
+
+int setblockopt(int devfd, int block)
+{
+	int flags;
+
+	flags = fcntl(devfd, F_GETFL);
+	if ((block? 0: O_NONBLOCK) ^ (flags & O_NONBLOCK)) {
+		flags = fcntl(devfd, F_SETFL, flags^O_NONBLOCK);
+	}
+
+	return flags;
+}
