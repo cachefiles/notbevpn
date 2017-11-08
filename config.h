@@ -18,6 +18,8 @@
 #define	__packed	__attribute__((__packed__))
 #define	__aligned(x)	__attribute__((__aligned__(x)))
 #include <netdb.h>
+#include <unistd.h>
+#include <arpa/inet.h>
 #include <arpa/inet.h>
 #include <bsd/queue.h>
 #include <bsdinet/ip.h>
@@ -28,6 +30,8 @@
 
 #ifndef __BSD_VISIBLE
 #include <netdb.h>
+#include <unistd.h>
+#include <arpa/inet.h>
 #include <sys/queue.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>

@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <assert.h>
 
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>

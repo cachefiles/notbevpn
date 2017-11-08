@@ -14,6 +14,9 @@
 #ifndef EMSGSIZE
 #define EMSGSIZE -100
 #define SIGHUP SIGINT
+#else
+#include <unistd.h>
+#include <arpa/inet.h>
 #endif
 
 int tcpup_track_stage1(void);
