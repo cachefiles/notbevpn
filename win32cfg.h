@@ -12,5 +12,7 @@ typedef uint32_t in_addr_t;
 typedef uint16_t u_int16_t;
 typedef uint8_t u_int8_t;
 
+#define bcopy(s, d, l) memcpy(d, s, l)
+
 #endif
 

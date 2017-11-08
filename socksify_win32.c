@@ -18,7 +18,6 @@ extern HANDLE dev_handle;
 
 int tun_open(const char *tun_device, const char *tun_ip, int tun_mask, int tun_port);
 int setenv(const char *name, const char *value, int overwrite);
-int disable_reset_report(int fd);
 
 typedef int socklen_t;
 #define logf(fmt, args...) 
@@ -232,35 +231,6 @@ static int tun_setip(const char *ip, int netbits)
 	return 0;
 }
 
-DWORD WINAPI tun_reader(LPVOID arg)
-{
-	struct tun_data *tun = arg;
-	char buf[TUN_READER_BUF_SIZE];
-	int len;
-	int res;
-	OVERLAPPED olpd;
-	int sock;
-	struct sockaddr addr;
-	socklen_t addrlen;
-
-	sock = vpn_udp_alloc(1, TUN_DELEGATE_ADDR, 0, &addr, &addrlen);
-
-	olpd.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-
-	while(TRUE) {
-		olpd.Offset = 0;
-		olpd.OffsetHigh = 0;
-		res = ReadFile(tun->tun, buf, sizeof(buf), (LPDWORD) &len, &olpd);
-		if (!res) {
-			WaitForSingleObject(olpd.hEvent, INFINITE);
-			res = GetOverlappedResult(dev_handle, &olpd, (LPDWORD) &len, FALSE);
-			res = sendto(sock, buf, len, 0, &tun->addr, tun->addrlen);
-		}
-	}
-
-	return 0;
-}
-
 int tun_open(const char *tun_device, const char *tun_ip, int tun_mask,
 		int tun_port)
 {
@@ -300,15 +270,12 @@ int tun_open(const char *tun_device, const char *tun_ip, int tun_mask,
 	 * A thread does blocking reads on tun device and
 	 * sends data as udp to this socket */
 
-	tunfd = vpn_udp_alloc(1, TUN_DELEGATE_ADDR, tun_port, &data.addr,
-			&data.addrlen);
+	tunfd = INVALID_SOCKET;
 	if (INVALID_SOCKET == tunfd) {
 		errf("can not bind delegate port for tun: %d", tun_port);
 		return -1;
 	}
 
-	data.tun = dev_handle;
-	CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE) tun_reader, &data, 0, NULL);
 	return tunfd;
 }
 
@@ -319,29 +286,24 @@ int setenv(const char *name, const char *value, int overwrite)
 	return _putenv(envbuf);
 }
 
-/*
- * disable new behavior using IOCTL: SIO_UDP_CONNRESET
- * Reference: http://support2.microsoft.com/kb/263823/en-us
- */
-int disable_reset_report(int fd)
-{
-	DWORD dwBytesReturned = 0;
-	BOOL bNewBehavior = FALSE;
-	if (INVALID_SOCKET == fd) {
-		return -1;
-	}
-	if (SOCKET_ERROR == WSAIoctl(fd, SIO_UDP_CONNRESET,
-				&bNewBehavior, sizeof(bNewBehavior),
-				NULL, 0, &dwBytesReturned, NULL, NULL)) {
-		errf("cannot disable UDP-Socket option SIO_UDP_CONNRESET");
-		close(fd);
-		return -1;
-	}
-	return fd;
-}
-
 int setblockopt(int devfd, int block)
 {
 	int mode = block;
 	return ioctlsocket(devfd, FIONBIO, &mode);
+}
+
+int tun_write(int handle, void *buf, size_t len)
+{
+	return 0;
+}
+
+int tun_read(int handle, void *buf, size_t len)
+{
+	// res = ReadFile(tun->tun, buf, sizeof(buf), (LPDWORD) &len, &olpd);
+	return 0;
+}
+
+int vpn_tun_alloc(const char *name)
+{
+	return 0;
 }

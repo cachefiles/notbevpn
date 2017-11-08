@@ -7,6 +7,7 @@
 #include <time.h>
 #include <signal.h>
 
+#include <config.h>
 #include <base_link.h>
 
 static unsigned char TUNNEL_PADDIND_DNS[] = {

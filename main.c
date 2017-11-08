@@ -14,9 +14,9 @@
 #ifndef EMSGSIZE
 #define EMSGSIZE -100
 #define SIGHUP SIGINT
-#else
-#include <unistd.h>
-#include <arpa/inet.h>
+#define getuid() 0
+#define setuid(x)
+#define setreuid(x, y)
 #endif
 
 int tcpup_track_stage1(void);

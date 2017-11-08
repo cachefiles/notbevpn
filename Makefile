@@ -1,8 +1,9 @@
 THIS_PATH := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-CFLAGS += -g
+CFLAGS += -g -Wall
 CFLAGS += -I$(THIS_PATH) -I$(THIS_PATH)/jni
 VPATH  := $(THIS_PATH)
+LDLIBS := -lws2_32
 
 ifneq ($(TARGET),)
 CC := $(TARGET)-gcc

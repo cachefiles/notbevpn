@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
+#include "config.h"
 #include "portpool.h"
 
 uint16_t use_nat_port(port_pool_t *pool, uint16_t port)
