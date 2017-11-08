@@ -470,7 +470,7 @@ int main(int argc, char *argv[])
 
 clean:
 	close(netfd);
-	close(tunfd);
+	vpn_tun_free(tunfd);
 
 	LOG_VERBOSE("exit");
 	return 0;

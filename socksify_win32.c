@@ -5,6 +5,7 @@
 #define _WIN32_WINNT 0x0501
 
 #include <stdio.h>
+#include <assert.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -22,12 +23,6 @@ int setenv(const char *name, const char *value, int overwrite);
 typedef int socklen_t;
 #define logf(fmt, args...) 
 #define errf(fmt, args...) 
-struct tun_data {
-	HANDLE tun;
-	int sock;
-	struct sockaddr addr;
-	socklen_t addrlen;
-};
 
 #define TUN_READER_BUF_SIZE (64 * 1024)
 #define TUN_NAME_BUF_SIZE 256
@@ -46,7 +41,6 @@ struct tun_data {
 #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
 
 HANDLE dev_handle;
-static struct tun_data data;
 static char if_name[TUN_NAME_BUF_SIZE];
 
 static void get_name(char *ifname, int namelen, char *dev_name);
@@ -236,7 +230,6 @@ int tun_open(const char *tun_device, const char *tun_ip, int tun_mask,
 {
 	char adapter[TUN_NAME_BUF_SIZE];
 	char tapfile[TUN_NAME_BUF_SIZE * 2];
-	int tunfd;
 
 	memset(adapter, 0, sizeof(adapter));
 	memset(if_name, 0, sizeof(if_name));
@@ -258,25 +251,14 @@ int tun_open(const char *tun_device, const char *tun_ip, int tun_mask,
 			FILE_ATTRIBUTE_SYSTEM | FILE_FLAG_OVERLAPPED, NULL);
 	if (dev_handle == INVALID_HANDLE_VALUE) {
 		errf("can not open device");
-		return -1;
+		return dev_handle;
 	}
 	if (0 != tun_setip(tun_ip, tun_mask)) {
 		errf("can not connect device");
 		return -1;
 	}
 
-	/* Use a UDP connection to forward packets from tun,
-	 * so we can still use select() in main code.
-	 * A thread does blocking reads on tun device and
-	 * sends data as udp to this socket */
-
-	tunfd = INVALID_SOCKET;
-	if (INVALID_SOCKET == tunfd) {
-		errf("can not bind delegate port for tun: %d", tun_port);
-		return -1;
-	}
-
-	return tunfd;
+	return dev_handle;
 }
 
 int setenv(const char *name, const char *value, int overwrite)
@@ -288,27 +270,134 @@ int setenv(const char *name, const char *value, int overwrite)
 
 int setblockopt(int devfd, int block)
 {
-	int mode = block;
+	u_long mode = block;
 	return ioctlsocket(devfd, FIONBIO, &mode);
 }
 
+static int _tun_fd = -1;
+
 int tun_write(int handle, void *buf, size_t len)
 {
+	BOOL success;
+	DWORD rlen = 0;
+	assert(handle == _tun_fd);
+	success = WriteFile(dev_handle, buf, len, (LPDWORD) &rlen, NULL);
+	return success? rlen: -1;
+}
+
+static int _mss_len = 0;
+static char _mss_buf[1500];
+
+static int _mss_polling = 0;
+static OVERLAPPED _mss_olpd = {};
+static HANDLE _handle_net = INVALID_HANDLE_VALUE;
+
+static int _prepare_receive(void)
+{
+	BOOL success;
+	DWORD rlen = 0;
+
+	if (_mss_polling == 1) {
+		success = GetOverlappedResult(dev_handle, &_mss_olpd, &rlen, FALSE);
+		if (success) {
+			assert(_mss_len <= 0);
+			_mss_len = rlen;
+		} else {
+			assert(GetLastError() == ERROR_IO_PENDING);
+		}
+	}  else if (_mss_len <= 0) {
+		success = ReadFile(dev_handle, _mss_buf, sizeof(_mss_buf), (LPDWORD) &rlen, &_mss_olpd);
+		if (success == TRUE) {
+			_mss_len = rlen;
+		} else if (GetLastError() ==  ERROR_IO_PENDING) {
+			_mss_polling = 1;
+		} else {
+			assert(0);
+		}
+	}
+
 	return 0;
 }
 
 int tun_read(int handle, void *buf, size_t len)
 {
-	// res = ReadFile(tun->tun, buf, sizeof(buf), (LPDWORD) &len, &olpd);
-	return 0;
+	int msslen = -1;
+
+	_prepare_receive();
+	if (_mss_len > 0) {
+		assert(_mss_len <= len);
+		memcpy(buf, _mss_buf, _mss_len);
+		msslen = _mss_len;
+		_mss_len = -1;
+	}
+
+	return msslen;
 }
 
 int vpn_tun_alloc(const char *name)
 {
+	WSADATA data;
+	WSAStartup(0x101, &data);
+	int tunfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	tun_open(name, "192.168.100.11", 24, 0);
+	_handle_net = WSACreateEvent();
+	_tun_fd = tunfd;
+	return tunfd;
+}
+
+int vpn_tun_free(int tunfd)
+{
+	assert(tunfd == _tun_fd);
+	CloseHandle(dev_handle);
+	closesocket(tunfd);
+	_tun_fd = -1;
 	return 0;
 }
 
 int select_call(int tunfd, int netfd, fd_set *readfds, struct timeval *timeo)
 {
-	return 0;
+	int count;
+	int milliseconds = -1;
+	struct timeval zero = {};
+	assert(tunfd == _tun_fd);
+
+	_prepare_receive();
+	count = select(0, readfds, NULL, NULL, &zero);
+	if (count >= 0 && _mss_len > 0) {
+		FD_SET(tunfd, readfds);
+		count++;
+	}
+
+	if (count != 0) {
+		return count;
+	}
+
+	WSAResetEvent(_handle_net);
+	WSAEventSelect(netfd, _handle_net, FD_READ);
+
+	if (timeo != NULL) {
+		milliseconds = timeo->tv_usec / 1000;
+		milliseconds += timeo->tv_sec * 1000;
+	}
+	
+	HANDLE _handles[2] = {_handle_net, dev_handle};
+	WaitForMultipleObjects(2, _handles, FALSE, milliseconds);
+
+	WSANETWORKEVENTS events = {};
+	WSAEnumNetworkEvents(netfd, _handle_net, &events);
+
+	if (events.lNetworkEvents & FD_READ) {
+		FD_SET(netfd, readfds);
+		count++;
+	}
+
+	_prepare_receive();
+	if (count >= 0 && _mss_len > 0) {
+		FD_SET(tunfd, readfds);
+		count++;
+	}
+
+	return count;
 }
+
