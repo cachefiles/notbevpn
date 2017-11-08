@@ -374,7 +374,7 @@ int main(int argc, char *argv[])
 
 			bug_check++;
 			busy_loop = 0;
-			nready = select(1 + MAX(tunfd, netfd), &readfds, NULL, NULL, &timeo);
+			nready = select_call(tunfd, netfd, &readfds, &timeo);
 			if (nready == -1) {
 				LOG_DEBUG("select failure");
 				if (errno == EINTR) continue;

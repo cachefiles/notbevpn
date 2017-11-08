@@ -307,3 +307,8 @@ int vpn_tun_alloc(const char *name)
 {
 	return 0;
 }
+
+int select_call(int tunfd, int netfd, fd_set *readfds, struct timeval *timeo)
+{
+	return 0;
+}
