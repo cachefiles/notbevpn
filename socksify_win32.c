@@ -10,6 +10,7 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <winioctl.h>
+#include <errno.h>
 
 #define bzero(...) ZeroMemory(__VA_ARGS__)
 #define TUN_DELEGATE_ADDR "127.0.0.1"
@@ -21,8 +22,8 @@ int tun_open(const char *tun_device, const char *tun_ip, int tun_mask, int tun_p
 int setenv(const char *name, const char *value, int overwrite);
 
 typedef int socklen_t;
-#define logf(fmt, args...) 
-#define errf(fmt, args...) 
+#define logf(fmt, args...) fprintf(stderr, fmt"\n", ##args)
+#define errf(fmt, args...) fprintf(stderr, fmt"\n", ##args)
 
 #define TUN_READER_BUF_SIZE (64 * 1024)
 #define TUN_NAME_BUF_SIZE 256
@@ -280,8 +281,18 @@ int tun_write(int handle, void *buf, size_t len)
 {
 	BOOL success;
 	DWORD rlen = 0;
+	OVERLAPPED olpd = {};
 	assert(handle == _tun_fd);
-	success = WriteFile(dev_handle, buf, len, (LPDWORD) &rlen, NULL);
+
+	success = WriteFile(dev_handle, buf, len, (LPDWORD) &rlen, &olpd);
+	if (!success && GetLastError() == ERROR_IO_PENDING) {
+		// WaitForSingleObject(olpd.hEvent, INFINITE);
+		success = GetOverlappedResult(dev_handle, &olpd, &rlen, TRUE);
+		if (!success) errf("WriteFile failure: %d, write len %d %d\n", success? 0: GetLastError(), rlen, success);
+	} else if (!success) {
+		errf("WriteFile failure: %d, write len %d\n", GetLastError(), len);
+		errno = GetLastError();
+	}
 	return success? rlen: -1;
 }
 
@@ -301,9 +312,11 @@ static int _prepare_receive(void)
 		success = GetOverlappedResult(dev_handle, &_mss_olpd, &rlen, FALSE);
 		if (success) {
 			assert(_mss_len <= 0);
+			_mss_polling = 0;
 			_mss_len = rlen;
 		} else {
-			assert(GetLastError() == ERROR_IO_PENDING);
+			int code = GetLastError();
+			assert(code == ERROR_IO_INCOMPLETE);
 		}
 	}  else if (_mss_len <= 0) {
 		success = ReadFile(dev_handle, _mss_buf, sizeof(_mss_buf), (LPDWORD) &rlen, &_mss_olpd);
@@ -322,13 +335,16 @@ static int _prepare_receive(void)
 int tun_read(int handle, void *buf, size_t len)
 {
 	int msslen = -1;
+	int fixup = 14;
 
 	_prepare_receive();
+	errno = EAGAIN;
 	if (_mss_len > 0) {
-		assert(_mss_len <= len);
+		assert(_mss_len <= len + fixup);
 		memcpy(buf, _mss_buf, _mss_len);
 		msslen = _mss_len;
 		_mss_len = -1;
+		errno = 0;
 	}
 
 	return msslen;

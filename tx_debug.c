@@ -184,9 +184,21 @@ static FILE *log_get(int fd, const char *tag)
 	return _logfp;
 }
 
-static int log_logable(const char *tag)
+static const char *_logable_tags = NULL;
+static const char *default_logable_tags = "FEWID";
+
+static int log_logable(const char *logtag)
 {
-	return 1;
+    if (_logable_tags == NULL) {
+        _logable_tags = getenv("LOGABLE_TAGS");
+
+        if (_logable_tags == NULL) {
+            _logable_tags = default_logable_tags;
+            assert (_logable_tags != NULL);
+        }
+    }
+
+    return (logtag == NULL) || (NULL != strstr(_logable_tags, logtag));
 }
 
 static int log_put(FILE *log)

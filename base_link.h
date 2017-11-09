@@ -32,7 +32,7 @@ int log_tag_putlog(const char *tag, const char *fmt, ...);
 #endif
 
 #ifndef LOG_VERBOSE
-#define LOG_VERBOSE(fmt, args...) 
+#define LOG_VERBOSE(fmt, args...) log_tag_putlog("V", fmt, ##args)
 #endif
 
 #define MIN(a, b) ((a) < (b)? (a): (b))

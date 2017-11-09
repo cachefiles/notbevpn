@@ -25,7 +25,7 @@ struct tcpuphdr {
 #endif  
   
         u_short th_win;  
-};  
+} __packed  __aligned(2);  
 
 #define MAGIC_UDP_TCP 0x0E
 

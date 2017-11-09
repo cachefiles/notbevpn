@@ -196,7 +196,8 @@ const char *ip2text(struct in_addr *ip)
 #ifndef WIN32
 	return inet_ntop(AF_INET, ip, _sbuf, 16);
 #else
-	return inet_ntoa(*ip);
+	strcpy(_sbuf, inet_ntoa(*ip));
+	return _sbuf;
 #endif
 }
 

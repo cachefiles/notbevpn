@@ -416,8 +416,8 @@ int main(int argc, char *argv[])
 			assert(bufsize + 60 < sizeof(buf));
 			len = (*link_ops->recv_data)(netfd, packet, bufsize, SOT(&tmp_addr), &tmp_alen); 
 			if (len < 0) {
-				LOG_VERBOSE("read netfd failure\n");
-				if (errno != EAGAIN) goto clean;
+				// LOG_VERBOSE("read netfd failure %d\n", WSAGetLastError());
+				// if (WSAGetLastError() != WSAEWOULDBLOCK) goto clean;
 				FD_CLR(netfd, &readfds);
 				nready--;
 				continue;
