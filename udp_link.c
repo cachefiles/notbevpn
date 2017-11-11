@@ -68,6 +68,8 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 	memcpy(_crypt_stream, TUNNEL_PADDIND_DNS, sizeof(TUNNEL_PADDIND_DNS));
 	memcpy(_crypt_stream + 14, &key, 2);
 	packet_encrypt(htons(key), _crypt_stream + sizeof(TUNNEL_PADDIND_DNS), buf, len);
+
+	protect_reset(IPPROTO_UDP, _crypt_stream, len, ll_addr, ll_len);
 	return sendto(devfd, _crypt_stream, len + sizeof(TUNNEL_PADDIND_DNS), 0, ll_addr, ll_len);
 }
 

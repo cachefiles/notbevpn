@@ -66,7 +66,7 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 
 int ip_checksum(void *buf, size_t len);
 
-int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len)
+static int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len)
 {
 	unsigned short key = rand();
 	struct icmphdr *hdr = NULL;
@@ -87,6 +87,7 @@ int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struct socka
 	hdr->checksum = 0;
 	hdr->checksum = ip_checksum(_crypt_stream, len + sizeof(*hdr));
 
+	protect_reset(IPPROTO_ICMP, _crypt_stream, len, ll_addr, ll_len);
 	return sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, ll_addr, ll_len);
 }
 

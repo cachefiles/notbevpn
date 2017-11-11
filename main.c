@@ -450,7 +450,7 @@ int main(int argc, char *argv[])
 				continue;
 			}
 
-			if (len > 0) {
+			if (len > 0 && !protect_match(packet, len)) {
 				len = tcpip_frag_input(packet, len, 1500);
 				ignore = (len <= 0)? 0: tun_write(tunfd, packet, len);
 				LOG_VERBOSE("tun_write: %d\n", ignore);
