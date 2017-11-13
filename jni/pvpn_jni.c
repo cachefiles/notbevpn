@@ -484,3 +484,14 @@ void JNI_OnUnload(JavaVM* vm, void* reserved){
 	LOG_VERBOSE("JNI_OnUnload"); 
 }
 
+int setblockopt(int devfd, int block)
+{
+	int flags;
+
+	flags = fcntl(devfd, F_GETFL);
+	if ((block? 0: O_NONBLOCK) ^ (flags & O_NONBLOCK)) {
+		flags = fcntl(devfd, F_SETFL, flags^O_NONBLOCK);
+	}
+
+	return flags;
+}

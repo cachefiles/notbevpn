@@ -20,9 +20,7 @@ int packet_encrypt(unsigned short key, void *dst, const void *src, size_t len);
 #include <android/log.h>
 #define LOG_TAG "WalleyeService"
 #define LOG_DEBUG(fmt, args...)  __android_log_print(ANDROID_LOG_INFO, LOG_TAG, fmt, ##args)
-#if 0
-#define LOG_VERBOSE(fmt, args...)  __android_log_print(ANDROID_LOG_VERBOSE, LOG_TAG, fmt, ##args)
-#endif
+#define LOG_VERBOSE(fmt, args...)
 #endif
 
 
