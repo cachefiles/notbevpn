@@ -23,7 +23,8 @@
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
 int check_blocked(int tunfd, char *packet, size_t len, time_t *limited);
-int check_blocked_normal(int tunfd, char *packet, size_t len);
+int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len);
+int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
 
 char * get_tcpup_data(int *len);
 char * get_tcpip_data(int *len);
@@ -35,6 +36,7 @@ static int last_track_count = 0;
 static int last_track_enable = 0;
 static time_t last_track_time = 0;
 
+static int _dns_fd = -1;
 static int _lostlink = 0;
 static int _disconnected = 0;
 static int _is_powersave = 0;
@@ -72,7 +74,7 @@ static int is_blocked(int tunfd, char *packet, size_t len)
 	if (_off_powersave) {
 		return check_blocked(tunfd, packet, len, &_time_powersave);
 	} else if (!_is_powersave) {
-		return check_blocked_normal(tunfd, packet, len);
+		return check_blocked_normal(tunfd, _dns_fd, packet, len);
 	}
 
 	time(&time_current);
@@ -82,9 +84,10 @@ static int is_blocked(int tunfd, char *packet, size_t len)
 	return 0;
 }
 
-static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
+static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *link_ops)
 {
 	int len;
+	int maxfd;
 	int ignore;
 	int nready = 0;
 	int loop_try = 0;
@@ -115,13 +118,16 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 			FD_ZERO(&readfds);
 			FD_SET(tunfd, &readfds);
 			FD_SET(netfd, &readfds);
+			FD_SET(dnsfd, &readfds);
+			maxfd = MAX(tunfd, netfd);
+			maxfd = MAX(maxfd, dnsfd);
 
 			timeo.tv_sec  = 1;
 			timeo.tv_usec = 0;
 
 			test++;
 			loop_try = 0;
-			nready = select(1 + MAX(tunfd, netfd), &readfds, NULL, NULL, &timeo);
+			nready = select(1 + maxfd, &readfds, NULL, NULL, &timeo);
 			if (nready == -1) {
 				LOG_VERBOSE("select failure");
 				return -1;
@@ -211,6 +217,26 @@ static int vpn_run_loop(int tunfd, int netfd, struct low_link_ops *link_ops)
 				// LOG_VERBOSE("send data: %d\n", ignore);
 				if (check_link_failure(ignore)) return -1;
 				last_track_enable = 1;
+			}
+		}
+
+		packet = (buf + 60);
+		if (FD_ISSET(dnsfd, &readfds)) {
+			int bufsize = 1500;
+			socklen_t tmp_alen = sizeof(tmp_addr);
+			test++;
+
+			len = recvfrom(dnsfd, packet, bufsize, 0, SOT(&tmp_addr), &tmp_alen); 
+			if (len < 0) {
+				LOG_VERBOSE("read dnsfd failure fd=%d, error: %s, %d/%d\n", dnsfd, strerror(errno), net_nbytes, net_npacket);
+				FD_CLR(dnsfd, &readfds);
+				nready--;
+				continue;
+			}
+
+			len = resolv_return(bufsize, packet, len, &tmp_addr);
+			if (len > 0) {
+				len = tun_write(tunfd, packet, len);
 			}
 		}
 
@@ -310,7 +336,9 @@ static int vpn_jni_free(JNIEnv *env, jclass clazz, jint which)
 {
 	_link_ops[which] = NULL;
 	close(_link_fd);
+	close(_dns_fd);
 	_link_fd = -1;
+	_dns_fd = -1;
 	return 0;
 }
 
@@ -401,6 +429,7 @@ static int vpn_jni_get_pendingfds(JNIEnv *env, jclass clazz, jint which, jintArr
 static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 {
 	int link_failure;
+	int dnsfd = _dns_fd;
 	int netfd = _link_fd;
 	struct low_link_ops *link_ops = _link_ops[which];
 
@@ -408,23 +437,36 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		netfd = link_ops->create();
 		assert (netfd != -1);
 		bind_last_address(netfd, which);
+
+		dnsfd = udp_ops.create();
+		assert (dnsfd != -1);
+
 		add_pending_fd(netfd);
+		add_pending_fd(dnsfd);
 		_link_fd = netfd;
+		_dns_fd = dnsfd;
 	}
 
 	if (_alength > 0) {
 		return 1;
 	}
 
-	link_failure = vpn_run_loop(tunfd, netfd, link_ops);
+	link_failure = vpn_run_loop(tunfd, netfd, dnsfd, link_ops);
 	if (link_failure == -1
 			&& _disconnected == 0) {
+		close(dnsfd);
 		close(netfd);
 		netfd = link_ops->create();
 		assert (netfd != -1);
 		bind_last_address(netfd, which);
+
+		dnsfd = udp_ops.create();
+		assert (dnsfd != -1);
+
 		add_pending_fd(netfd);
+		add_pending_fd(dnsfd);
 		_link_fd = netfd;
+		_dns_fd = netfd;
 	}
 
 	if (_alength > 0) {

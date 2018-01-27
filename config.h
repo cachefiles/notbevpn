@@ -12,7 +12,7 @@
 #include <bsdinet/ip6.h>
 #include <bsdinet/tcp.h>
 #include <bsdinet/udp.h>
-int select_call(int tunfd, int netfd, fd_set *readfds, struct timeval *timeo);
+int select_call(int tunfd, int netfd, int dnsfd, fd_set *readfds, struct timeval *timeo);
 int vpn_tun_free(int tunfd);
 #endif
 
@@ -29,7 +29,7 @@ int vpn_tun_free(int tunfd);
 #include <bsdinet/ip6.h>
 #include <bsdinet/tcp.h>
 #include <bsdinet/udp.h>
-#define select_call(tunfd, netfd, readfds, timeo) select(FD_MAX(tunfd, netfd) + 1, readfds, NULL, NULL, timeo)
+#define select_call(tunfd, netfd, dnsfs, readfds, timeo) select(FD_MAX(tunfd, netfd) + 1, readfds, NULL, NULL, timeo)
 #define vpn_tun_free(p) close(p)
 #endif
 
@@ -42,7 +42,7 @@ int vpn_tun_free(int tunfd);
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
-#define select_call(tunfd, netfd, readfds, timeo) select(FD_MAX(tunfd, netfd) + 1, readfds, NULL, NULL, timeo)
+#define select_call(tunfd, netfd, dnsfd, readfds, timeo) select(FD_MAX(tunfd, netfd) + 1, readfds, NULL, NULL, timeo)
 #define vpn_tun_free(p) close(p)
 #endif
 

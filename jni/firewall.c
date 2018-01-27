@@ -281,13 +281,19 @@ int check_blocked(int tunfd, char *packet, size_t len, time_t *limited)
 	return 0;
 }
 
-int check_blocked_normal(int tunfd, char *packet, size_t len)
+#define CPTR(ptr) ((char *)(ptr))
+int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from);
+
+int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len)
 {
 	nat_iphdr_t *ip;
 
 	nat_ip6hdr_t *ip6;
 	nat_tcphdr_t *th, h1;
 	nat_udphdr_t *uh, u1;
+
+	struct sockaddr_in dest;
+	struct sockaddr_in from;
 
 	ip = (nat_iphdr_t *)packet;
 
@@ -298,6 +304,20 @@ int check_blocked_normal(int tunfd, char *packet, size_t len)
 	if (ip->ip_p == IPPROTO_UDP) {
 		uh = (nat_udphdr_t *)(ip + 1);
 		switch(htons(uh->uh_dport)) {
+			case 53:
+				if (ip->ip_dst.s_addr != 0x08080808 && CPTR(uh + 1) < (packet + len)) {
+					dest.sin_family = AF_INET;
+					dest.sin_port   = uh->uh_dport;
+					dest.sin_addr   = ip->ip_dst;
+
+					from.sin_family = AF_INET;
+					from.sin_port   = uh->uh_sport;
+					from.sin_addr   = ip->ip_src;
+
+					resolv_invoke(dnsfd, CPTR(uh + 1), packet + len - CPTR(uh + 1), &dest, &from);
+					return 1;
+				}
+
 			default:
 				break;
 		}

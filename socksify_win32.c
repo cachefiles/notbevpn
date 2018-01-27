@@ -371,7 +371,7 @@ int vpn_tun_free(int tunfd)
 	return 0;
 }
 
-int select_call(int tunfd, int netfd, fd_set *readfds, struct timeval *timeo)
+int select_call(int tunfd, int netfd, int dnsfd, fd_set *readfds, struct timeval *timeo)
 {
 	int count;
 	int milliseconds = -1;

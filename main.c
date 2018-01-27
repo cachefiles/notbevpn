@@ -30,6 +30,8 @@ int tun_write(int fd, void *buf, size_t len);
 
 ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit);
 ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit);
+int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len);
+int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
 
 
 #define DEFAULT_TUN_NAME "tun0"
@@ -124,7 +126,6 @@ int set_tcp_mss_by_mtu(int mtu);
 
 int get_device_mtu(int sockfd, struct sockaddr *dest, socklen_t dlen, int def_mtu)
 {
-	int val;
 	int total = 0;
 
 	int sht = 2;
@@ -255,7 +256,7 @@ int main(int argc, char *argv[])
 	const char *tun_name = DEFAULT_TUN_NAME;
 	char buf[MAX_PACKET_SIZE];
 
-	int netfd, error, have_target = 0;
+	int netfd, dnsfd, error, have_target = 0;
 	struct sockaddr_in ll_addr = {};
 	struct sockaddr_in so_addr = {};
 	struct sockaddr_in tmp_addr = {};
@@ -332,6 +333,9 @@ int main(int argc, char *argv[])
 	netfd = (*link_ops->create)();
 	assert(netfd != -1);
 
+	dnsfd = (*udp_ops.create)();
+	assert(dnsfd != -1);
+
 	setreuid(save_uid, save_uid);
 	error = bind(netfd, SOT(&so_addr), sizeof(so_addr));
 	assert(error == 0);
@@ -355,7 +359,7 @@ int main(int argc, char *argv[])
 		char * packet;
 		struct timeval timeo = {};
 
-		int bug_check = 0;
+		int maxfd, bug_check = 0;
 		if (nready <= 0 || busy_loop > 1000) {
 			if (last_track_enable && tcpup_track_stage2()) {
 				last_track_enable = 0;
@@ -368,13 +372,16 @@ int main(int argc, char *argv[])
 			FD_ZERO(&readfds);
 			FD_SET(tunfd, &readfds);
 			FD_SET(netfd, &readfds);
+			FD_SET(dnsfd, &readfds);
+			maxfd = MAX(tunfd, netfd);
+			maxfd = MAX(maxfd, dnsfd);
 
 			timeo.tv_sec  = 1;
 			timeo.tv_usec = 0;
 
 			bug_check++;
 			busy_loop = 0;
-			nready = select_call(tunfd, netfd, &readfds, &timeo);
+			nready = select_call(maxfd, netfd, dnsfd, &readfds, &timeo);
 			if (nready == -1) {
 				LOG_DEBUG("select failure");
 				if (errno == EINTR) continue;
@@ -450,6 +457,11 @@ int main(int argc, char *argv[])
 				continue;
 			}
 
+			if (check_blocked_normal(tunfd, dnsfd, packet, len)) {
+				LOG_VERBOSE("ignore blocked data\n");
+				continue;
+			}
+
 			if (len > 0 && !protect_match(packet, len)) {
 				len = tcpip_frag_input(packet, len, 1500);
 				ignore = (len <= 0)? 0: tun_write(tunfd, packet, len);
@@ -465,11 +477,32 @@ int main(int argc, char *argv[])
 			}
 		}
 
+		if (FD_ISSET(dnsfd, &readfds)) {
+			int bufsize = 1500;
+			packet = (buf + 60);
+			socklen_t tmp_alen = sizeof(tmp_addr);
+			bug_check++;
+
+			LOG_DEBUG("receive dns data\n");
+			len = recvfrom(dnsfd, packet, bufsize, 0, SOT(&tmp_addr), &tmp_alen); 
+			if (len < 0) {
+				FD_CLR(dnsfd, &readfds);
+				nready--;
+				continue;
+			}
+
+			len = resolv_return(bufsize, packet, len, &tmp_addr);
+			if (len > 0) {
+				len = tun_write(tunfd, packet, len);
+			}
+		}
+
 		assert(bug_check > 0);
 	}
 
 clean:
 	close(netfd);
+	close(dnsfd);
 	vpn_tun_free(tunfd);
 
 	LOG_VERBOSE("exit");
