@@ -121,6 +121,7 @@ static struct sockaddr_in * resolv_fetch(int ident, int *pflags)
 int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from)
 {
 	int i;
+	int error;
 
 	char crypt[256];
 	char sndbuf[2048];
@@ -161,9 +162,8 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 #endif
 
 	resolv_record(parser.head.ident, from, flags);
-	sendto(dnsfd, sndbuf, len, 0, (struct sockaddr *)dest, sizeof(*dest));
-
-	return 0;
+	error = sendto(dnsfd, sndbuf, len, 0, (struct sockaddr *)dest, sizeof(*dest));
+	return error;
 }
 
 static int ip4_mktpl(nat_iphdr_t *ip, struct sockaddr_in *from, struct sockaddr_in *dest, size_t len)

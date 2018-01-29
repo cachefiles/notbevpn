@@ -38,6 +38,7 @@ static time_t last_track_time = 0;
 
 static int _dns_fd = -1;
 static int _lostlink = 0;
+static int _linkfailure = 0;
 static int _disconnected = 0;
 static int _is_powersave = 0;
 static int _off_powersave = 0;
@@ -130,6 +131,11 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 			nready = select(1 + maxfd, &readfds, NULL, NULL, &timeo);
 			if (nready == -1) {
 				LOG_VERBOSE("select failure");
+				return -1;
+			}
+
+			if (nready == 0 && _linkfailure) {
+				_linkfailure = 0;
 				return -1;
 			}
 
@@ -342,6 +348,12 @@ static int vpn_jni_free(JNIEnv *env, jclass clazz, jint which)
 	return 0;
 }
 
+int set_linkfailure()
+{
+	_linkfailure = 1;
+	return 0;
+}
+
 static int vpn_jni_set_lostlink(JNIEnv *env, jclass clazz, jint which)
 {
 	_lostlink = 1;
@@ -451,6 +463,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		return 1;
 	}
 
+	_linkfailure = 0;
 	link_failure = vpn_run_loop(tunfd, netfd, dnsfd, link_ops);
 	if (link_failure == -1
 			&& _disconnected == 0) {

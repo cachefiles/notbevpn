@@ -33,6 +33,10 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit);
 int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len);
 int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
 
+int set_linkfailure()
+{
+	return 0;
+}
 
 #define DEFAULT_TUN_NAME "tun0"
 
@@ -134,12 +138,12 @@ int get_device_mtu(int sockfd, struct sockaddr *dest, socklen_t dlen, int def_mt
 	static int dev_mtu = 0;
 
 #if defined(IP_DONTFRAG)
-	val = 1;
+	int val = 1;
 	setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val));
 #endif
 
 #if defined(IP_MTU_DISCOVER)
-	val = IP_PMTUDISC_DO;
+	int val = IP_PMTUDISC_DO;
 	setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &val, sizeof(val));
 #else
 	goto cleanup;

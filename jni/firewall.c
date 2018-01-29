@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <errno.h>
 
 #include <config.h>
 #include <base_link.h>
@@ -314,7 +315,12 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len)
 					from.sin_port   = uh->uh_sport;
 					from.sin_addr   = ip->ip_src;
 
-					resolv_invoke(dnsfd, CPTR(uh + 1), packet + len - CPTR(uh + 1), &dest, &from);
+					if (-1 == resolv_invoke(dnsfd, CPTR(uh + 1), packet + len - CPTR(uh + 1), &dest, &from)) {
+						int set_linkfailure();
+						if (errno != ENOBUFS && errno != EAGAIN) {
+							set_linkfailure();
+						}
+					}
 					return 1;
 				}
 
