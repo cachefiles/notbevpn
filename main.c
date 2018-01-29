@@ -30,7 +30,7 @@ int tun_write(int fd, void *buf, size_t len);
 
 ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit);
 ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit);
-int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len);
+int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure);
 int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
 
 int set_linkfailure()
@@ -461,7 +461,8 @@ int main(int argc, char *argv[])
 				continue;
 			}
 
-			if (check_blocked_normal(tunfd, dnsfd, packet, len)) {
+			int ignore = 0;
+			if (check_blocked_normal(tunfd, dnsfd, packet, len, &ignore)) {
 				LOG_VERBOSE("ignore blocked data\n");
 				continue;
 			}

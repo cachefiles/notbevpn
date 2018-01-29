@@ -283,9 +283,10 @@ int check_blocked(int tunfd, char *packet, size_t len, time_t *limited)
 }
 
 #define CPTR(ptr) ((char *)(ptr))
+int set_linkfailure();
 int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from);
 
-int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len)
+int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure_try)
 {
 	nat_iphdr_t *ip;
 
@@ -316,11 +317,11 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len)
 					from.sin_addr   = ip->ip_src;
 
 					if (-1 == resolv_invoke(dnsfd, CPTR(uh + 1), packet + len - CPTR(uh + 1), &dest, &from)) {
-						int set_linkfailure();
 						if (errno != ENOBUFS && errno != EAGAIN) {
 							set_linkfailure();
 						}
 					}
+					(*failure_try)++;
 					return 1;
 				}
 
