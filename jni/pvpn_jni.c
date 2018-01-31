@@ -292,6 +292,23 @@ static int _link_fd = -1;
 static struct sockaddr_in _last_bind[10] = {};
 static struct low_link_ops *_link_ops[10] = {NULL};
 
+static int bind_any_address(int netfd)
+{
+	int error;
+	union {
+		struct sockaddr sa;
+		struct sockaddr_in sin;
+	} u0;
+
+	u0.sin.sin_family = AF_INET;
+	u0.sin.sin_port   = 0;
+	u0.sin.sin_addr.s_addr   = 0;
+
+	error = bind(netfd, &u0.sa, sizeof(u0));
+
+	return error;
+}
+
 static int bind_last_address(int netfd, int which)
 {
 	int error;
@@ -458,13 +475,13 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		netfd = link_ops->create();
 		assert (netfd != -1);
 		bind_last_address(netfd, which);
+		add_pending_fd(netfd);
+		_link_fd = netfd;
 
 		dnsfd = udp_ops.create();
 		assert (dnsfd != -1);
-
-		add_pending_fd(netfd);
+		bind_any_address(dnsfd);
 		add_pending_fd(dnsfd);
-		_link_fd = netfd;
 		_dns_fd = dnsfd;
 	}
 
@@ -481,13 +498,13 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		netfd = link_ops->create();
 		assert (netfd != -1);
 		bind_last_address(netfd, which);
+		add_pending_fd(netfd);
+		_link_fd = netfd;
 
 		dnsfd = udp_ops.create();
 		assert (dnsfd != -1);
-
-		add_pending_fd(netfd);
+		bind_any_address(dnsfd);
 		add_pending_fd(dnsfd);
-		_link_fd = netfd;
 		_dns_fd = dnsfd;
 	}
 

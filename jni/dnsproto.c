@@ -13,6 +13,8 @@
 #define dn_comp __dn_comp  
 #endif
 
+#define NTOH_PTR_SET(x, y, z) { z _t; memcpy(&_t, y, sizeof(_t)); switch (sizeof(_t)) { case 4: _t = htonl(_t); break; case 2: _t = htons(_t); break; default: break; } memcpy(x, &_t, sizeof(_t)); }
+
 union dns_res_value {
 	uint32_t u32;
 	uint16_t u16;
@@ -102,7 +104,7 @@ const uint8_t * rsc_verify_handle(struct dns_resource *res, struct dns_parser *p
 		uint8_t *vallimit = res->value + sizeof(res->value);
 		const char *signature = rsrc_verify_signature[res->type];
 
-		while (*signature) {
+		while (*signature && dopt < &frame[msglen]) {
 			void *btr = valptr;
 			switch (*signature++) {
 				case 'B':
@@ -115,14 +117,14 @@ const uint8_t * rsc_verify_handle(struct dns_resource *res, struct dns_parser *p
 				case 'u':
 					valptr += 4;
 					assert(valptr < vallimit);
-					*(uint32_t *)btr = ntohl(*(uint32_t *)dopt);
+					NTOH_PTR_SET(btr, dopt, uint32_t);
 					dopt += 4;
 					break;
 
 				case 'q':
 					valptr += 2;
 					assert(valptr < vallimit);
-					*(uint16_t *)btr = ntohs(*(uint16_t *)dopt);
+					NTOH_PTR_SET(btr, dopt, uint16_t);
 					dopt += 2;
 					break;
 
@@ -335,7 +337,7 @@ uint8_t * dn_put_resource(uint8_t *dotp, uint8_t *limit, const struct dns_resour
 		mark = dotp;
 		dotp = dn_put_short(dotp, limit, res->len);
 
-		while (*signature) {
+		while (*signature && dotp < limit) {
 			union dns_res_value * drvp = (union dns_res_value *)right_val;
 			switch (*signature++) {
 				case 'B':
@@ -345,20 +347,20 @@ uint8_t * dn_put_resource(uint8_t *dotp, uint8_t *limit, const struct dns_resour
 					break;
 
 				case 'u':
-					*(uint32_t *)dotp = htonl(drvp->u32);
+					NTOH_PTR_SET(dotp, &drvp->u32, uint32_t);
 					right_val += 4;
 					dotp += 4;
 					break;
 
 				case 'q':
-					*(uint16_t *)dotp = htonl(drvp->u16);
+					NTOH_PTR_SET(dotp, &drvp->u16, uint16_t);
 					right_val += 2;
 					dotp += 2;
 					break;
 
 				case 's':
 					ret = dn_comp(drvp->str, dotp, limit - dotp, parse->comptr, parse->comptr + MAX_RECORD_COUNT);
-					if (ret > 0) {
+					if (ret > 0 && dotp + ret + 4 < limit) {
 						right_val += sizeof(void *);
 						dotp += ret;
 						break;
