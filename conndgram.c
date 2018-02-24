@@ -325,6 +325,7 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 	if (conn != NULL) {
 		ip = (nat_ip6hdr_t *)packet;
 
+		conn->use_port = 1;
 		conn->last_alive = now;
 		conn->c.th_sport = sport;
 		conn->c.th_dport = dport;

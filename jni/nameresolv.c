@@ -157,7 +157,7 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 	}
 #else
 	_save_addr = *dest;
-	dest->sin_addr.s_addr = inet_addr("119.29.29.29");
+	dest->sin_addr.s_addr = inet_addr("114.114.114.114");
 	flags = 1;
 #endif
 
@@ -239,6 +239,7 @@ static int add_dns_route(const uint8_t *dest)
 
 	if (_add_route_proc == 0) {
 		int i;
+#if 0
 		snprintf(subnet, sizeof(subnet), "route add -net %d.%d.%d.0/24 -interface utun1", dest[0], dest[1], dest[2]);
 		LOG_DEBUG("cmd_0 %s\n", subnet);
 		system(subnet);
@@ -249,6 +250,7 @@ static int add_dns_route(const uint8_t *dest)
 			LOG_DEBUG("cmd_0 %s\n", subnet);
 			system(subnet);
 		}
+#endif
 		exit(0);
 	}
 
