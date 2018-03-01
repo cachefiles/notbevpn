@@ -150,11 +150,20 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 #ifdef __ANDROID__
 	char dns[97];
 	__system_property_get("net.dns1", dns);
-	if (*dns && strcmp("8.8.8.8", dns) != 0) {
+	if (*dns && strchr(dns, ':') == NULL) {
+		_save_addr = *dest;
+		dest->sin_addr.s_addr = inet_addr(dns);
+		flags = 1;
+		goto skip_dns2;
+	}
+
+	__system_property_get("net.dns2", dns);
+	if (*dns && strchr(dns, ':') == NULL) {
 		_save_addr = *dest;
 		dest->sin_addr.s_addr = inet_addr(dns);
 		flags = 1;
 	}
+skip_dns2:
 #else
 	_save_addr = *dest;
 	dest->sin_addr.s_addr = inet_addr("114.114.114.114");
@@ -284,7 +293,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 		strcpy(name, que->domain);
 		decrypt_domain(name);
 
-		if (strcasestr(name, SUFFIXES)) {
+		if (strcasestr(name, "yrli.bid")) {
 			have_suffixes = 1;
 		}
 
@@ -297,8 +306,13 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 	for (i = 0; i < parser.head.answer; i++) {
 		res = &parser.answer[i];
 
+		LOG_DEBUG("an %d: %s T%d\n", i, res->domain, res->type);
 		if (strcasecmp(res->domain, crypt) == 0) {
 			res->domain = parser.question[0].domain;
+		}
+
+		if (res->type == NSTYPE_CNAME) {
+			have_suffixes = 1;
 		}
 
 		if (res->type == NSTYPE_A && have_suffixes == 0) {

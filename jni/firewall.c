@@ -294,6 +294,8 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 	nat_tcphdr_t *th, h1;
 	nat_udphdr_t *uh, u1;
 
+	int nswrap;
+	u_long dst_ns;
 	struct sockaddr_in dest;
 	struct sockaddr_in from;
 
@@ -305,9 +307,12 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 
 	if (ip->ip_p == IPPROTO_UDP) {
 		uh = (nat_udphdr_t *)(ip + 1);
+
 		switch(htons(uh->uh_dport)) {
 			case 53:
-				if (ip->ip_dst.s_addr != 0x08080808 && CPTR(uh + 1) < (packet + len)) {
+				dst_ns = ip->ip_dst.s_addr ^ htonl(1);
+				nswrap = (dst_ns == htonl(0x8080404) || dst_ns == ip->ip_src.s_addr);
+				if (nswrap && CPTR(uh + 1) < (packet + len)) {
 					dest.sin_family = AF_INET;
 					dest.sin_port   = uh->uh_dport;
 					dest.sin_addr   = ip->ip_dst;
