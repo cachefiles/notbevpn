@@ -22,7 +22,7 @@
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
-int check_blocked(int tunfd, char *packet, size_t len, time_t *limited);
+int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t *limited);
 int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *pfailure);
 int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
 
@@ -73,14 +73,14 @@ static int is_blocked(int tunfd, char *packet, size_t len, int *failure)
 	time_t time_current = 0;
 
 	if (_off_powersave) {
-		return check_blocked(tunfd, packet, len, &_time_powersave);
+		return check_blocked_silent(tunfd, _dns_fd, packet, len, &_time_powersave);
 	} else if (!_is_powersave) {
 		return check_blocked_normal(tunfd, _dns_fd, packet, len, failure);
 	}
 
 	time(&time_current);
 	_off_powersave = (_time_powersave > time_current) || (_time_powersave + 30 < time_current);
-	check_blocked(-1, packet, len, &_time_powersave);
+	check_blocked_silent(-1, _dns_fd, packet, len, &_time_powersave);
 
 	return 0;
 }
