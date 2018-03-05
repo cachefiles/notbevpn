@@ -24,12 +24,15 @@ ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet);
 int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t *limited);
 int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure_try);
 
+#define CPTR(ptr) ((char *)(ptr))
+int set_linkfailure();
+int is_tethering_dns(struct in_addr);
+int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from, int nswrap);
+
 static const char _inet_prefix[] = "104.16.0.0/12 184.84.0.0/14 23.64.0.0/14 23.32.0.0/11 96.6.0.0/15 162.125.0.0/16 203.0.0.0/8 66.6.32.0/20 199.59.148.0/22 31.13.70.0/23 108.160.160.0/20 8.8.0.0/16 64.18.0.0/20 64.233.160.0/19 66.102.0.0/20 66.249.80.0/20 72.14.192.0/18 74.125.0.0/16 108.177.8.0/21 173.194.0.0/16 207.126.144.0/20 209.85.128.0/17 216.58.192.0/19 216.239.32.0/19 172.217.0.0/19";
 
 int is_google_net(struct in_addr net)
 {
-	int index;
-	unsigned network = 0;
 	static int _is_initilize = 0;
 
 	if (_is_initilize == 0) {
@@ -189,9 +192,6 @@ static int conntrack_tcp_lookup(nat_iphdr_t *ip, nat_tcphdr_t *th)
 static int conntrack_tcp_new(nat_tcphdr_t *th, char *packet, size_t len)
 {
 	int count;
-	nat_iphdr_t * ip = (nat_iphdr_t *)packet;
-	assert (htons(th->th_sport) > 1024);
-	assert (htons(th->th_dport) < 1024);
 
 	count = conntrack_tcp_nat(th, packet, len);
 
@@ -217,9 +217,8 @@ int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t 
 	time_t current;
 	nat_iphdr_t *ip;
 
-	nat_ip6hdr_t *ip6;
-	nat_tcphdr_t *th, h1;
-	nat_udphdr_t *uh, u1;
+	nat_tcphdr_t *th;
+	nat_udphdr_t *uh;
 
 	ip = (nat_iphdr_t *)packet;
 
@@ -297,20 +296,13 @@ int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t 
 	return 0;
 }
 
-#define CPTR(ptr) ((char *)(ptr))
-int set_linkfailure();
-int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from);
-
 int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure_try)
 {
 	nat_iphdr_t *ip;
+	nat_udphdr_t *uh;
 
-	nat_ip6hdr_t *ip6;
-	nat_tcphdr_t *th, h1;
-	nat_udphdr_t *uh, u1;
-
-	int nswrap;
 	u_long dst_ns;
+	int nswrap, istether = 0;
 	struct sockaddr_in dest;
 	struct sockaddr_in from;
 
@@ -327,7 +319,11 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 			case 53:
 				dst_ns = ip->ip_dst.s_addr ^ htonl(1);
 				nswrap = (ip->ip_dst.s_addr == htonl(0x8080404) || dst_ns == ip->ip_src.s_addr);
-				if (nswrap && CPTR(uh + 1) < (packet + len)) {
+#ifdef __ANDROID__
+				istether = is_tethering_dns(ip->ip_dst);
+#endif
+				if ((nswrap || istether) &&
+						is_local(ip->ip_src) && CPTR(uh + 1) < (packet + len)) {
 					dest.sin_family = AF_INET;
 					dest.sin_port   = uh->uh_dport;
 					dest.sin_addr   = ip->ip_dst;
@@ -336,7 +332,7 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 					from.sin_port   = uh->uh_sport;
 					from.sin_addr   = ip->ip_src;
 
-					if (-1 == resolv_invoke(dnsfd, CPTR(uh + 1), packet + len - CPTR(uh + 1), &dest, &from)) {
+					if (-1 == resolv_invoke(dnsfd, CPTR(uh + 1), packet + len - CPTR(uh + 1), &dest, &from, istether)) {
 						if (errno != ENOBUFS && errno != EAGAIN) {
 							set_linkfailure();
 						}

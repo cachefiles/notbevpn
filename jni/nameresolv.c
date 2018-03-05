@@ -78,13 +78,13 @@ struct resolv_t {
 	int flags;
 	uint16_t ident;
 	struct sockaddr_in from;
+	struct sockaddr_in dest;
 };
 
 static int _wheel = 0;
 struct resolv_t _pending_resolv[512];
-struct sockaddr_in _save_addr = {};
 
-static int resolv_record(int ident, struct sockaddr_in *from, int flags)
+static int resolv_record(int ident, struct sockaddr_in *from, struct sockaddr_in *dest, int flags)
 {
 	int i;
 	int wheel = _wheel;
@@ -99,18 +99,20 @@ static int resolv_record(int ident, struct sockaddr_in *from, int flags)
 
 	_wheel = (wheel + 1) & 0x1FF;
 	_pending_resolv[wheel].from = *from;
+	_pending_resolv[wheel].dest = *dest;
 	_pending_resolv[wheel].ident = ident;
 	_pending_resolv[wheel].flags = flags;
 	return 0;
 }
 
-static struct sockaddr_in * resolv_fetch(int ident, int *pflags)
+static struct sockaddr_in * resolv_fetch(int ident, struct sockaddr_in *from)
 {
 	int i;
 
 	for (i = 0; i < 512; i++) {
 		if (ident == _pending_resolv[i].ident) {
-			*pflags = _pending_resolv[i].flags;
+			if (_pending_resolv[i].flags)
+				*from = _pending_resolv[i].dest;
 			return &_pending_resolv[i].from;
 		}
 	}
@@ -118,7 +120,51 @@ static struct sockaddr_in * resolv_fetch(int ident, int *pflags)
 	return 0;
 }
 
-int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from)
+#ifdef __ANDROID__
+static int get_dns_addr(struct sockaddr_in *dest, int tethering)
+{
+	char dns[97];
+
+	if (tethering) {
+		return 0;
+	}
+
+	__system_property_get("net.dns1", dns);
+	if (*dns && strchr(dns, ':') == NULL) {
+		dest->sin_addr.s_addr = inet_addr(dns);
+		return 1;
+	}
+
+	__system_property_get("net.dns2", dns);
+	if (*dns && strchr(dns, ':') == NULL) {
+		dest->sin_addr.s_addr = inet_addr(dns);
+		return 1;
+	}
+
+	return 0;
+}
+
+int is_tethering_dns(struct in_addr serv)
+{
+	char dns[97];
+
+	__system_property_get("net.dns1", dns);
+	if (*dns && strchr(dns, ':') == NULL &&
+			serv.s_addr == inet_addr(dns)) {
+		return 1;
+	}
+
+	__system_property_get("net.dns2", dns);
+	if (*dns && strchr(dns, ':') == NULL &&
+			serv.s_addr == inet_addr(dns)) {
+		return 1;
+	}
+
+	return 0;
+}
+#endif
+
+int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from, int tethering)
 {
 	int i;
 	int error;
@@ -146,31 +192,16 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 	}
 
 	int flags = 0;
+	struct sockaddr_in _save_addr = *dest;
 
 #ifdef __ANDROID__
-	char dns[97];
-	__system_property_get("net.dns1", dns);
-	if (*dns && strchr(dns, ':') == NULL) {
-		_save_addr = *dest;
-		dest->sin_addr.s_addr = inet_addr(dns);
-		flags = 1;
-		goto skip_dns2;
-	}
-
-	__system_property_get("net.dns2", dns);
-	if (*dns && strchr(dns, ':') == NULL) {
-		_save_addr = *dest;
-		dest->sin_addr.s_addr = inet_addr(dns);
-		flags = 1;
-	}
-skip_dns2:
+	flags = get_dns_addr(dest, tethering);
 #else
-	_save_addr = *dest;
 	dest->sin_addr.s_addr = inet_addr("114.114.114.114");
 	flags = 1;
 #endif
 
-	resolv_record(parser.head.ident, from, flags);
+	resolv_record(parser.head.ident, from, &_save_addr, flags);
 	error = sendto(dnsfd, sndbuf, len, 0, (struct sockaddr *)dest, sizeof(*dest));
 	return error;
 }
@@ -225,7 +256,6 @@ static int add_dns_route(const uint8_t *dest)
 {
 	int total = 0;
 	int exitcode = 0;
-	char subnet[160];
 
 	total = _pending_count;
 	if (_add_route_proc != -1) {
@@ -247,8 +277,9 @@ static int add_dns_route(const uint8_t *dest)
 	}
 
 	if (_add_route_proc == 0) {
-		int i;
 #if 0
+		int i;
+		char subnet[160];
 		snprintf(subnet, sizeof(subnet), "route add -net %d.%d.%d.0/24 -interface utun1", dest[0], dest[1], dest[2]);
 		LOG_DEBUG("cmd_0 %s\n", subnet);
 		system(subnet);
@@ -270,7 +301,6 @@ static int add_dns_route(const uint8_t *dest)
 int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *from)
 {
 	int i;
-	int flags;
 	int have_suffixes = 0;
 
 	char name[256];
@@ -332,14 +362,9 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 		return -1;
 	}
 
-	dest = resolv_fetch(parser.head.ident, &flags);
+	dest = resolv_fetch(parser.head.ident, from);
 	if (dest == NULL) {
 		return -1;
-	}
-
-	if (flags) {
-		*from = _save_addr;
-		flags = 0;
 	}
 
 	ip4_mktpl(ip, from, dest, len);
