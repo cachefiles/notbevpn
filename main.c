@@ -291,9 +291,9 @@ int main(int argc, char *argv[])
 		} else {
 			have_target = 1;
 			const char *server = argv[i];
-			if (strcmp(argv[i], "server") == 0) {
-				server = "8.8.8.8";
+			if (strncmp(argv[i], "cafe:", 5) == 0) {
 				have_target = 2;
+				server += 5;
 			}
 			parse_sockaddr_in(&ll_addr, server);
 			continue;
