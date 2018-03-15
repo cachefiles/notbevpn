@@ -47,4 +47,6 @@ int setblockopt(int fd, int block);
 int protect_match(void *buf, size_t len);
 int protect_reset(int proto, void *buf, size_t len, const struct sockaddr *ll_addr, socklen_t ll_len);
 
+int get_ack_type(void);
+
 #endif

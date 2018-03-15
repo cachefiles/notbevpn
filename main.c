@@ -368,8 +368,9 @@ int main(int argc, char *argv[])
 			if (last_track_enable && tcpup_track_stage2()) {
 				last_track_enable = 0;
 				if ((packet = get_tcpup_data(&len)) != NULL) {
-					(*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
+					error = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
 					LOG_DEBUG("send probe data: %d\n", len);
+					if (error == -1) _reload = 2;
 				}
 			}
 
@@ -392,7 +393,7 @@ int main(int argc, char *argv[])
 				break;
 			}
 
-			if (nready == 0 || ++last_track_count >= 10) {
+			if (nready == 0 || ++last_track_count >= 10 || _reload == 2) {
 				time_t now = time(NULL);
 				if (now < last_track_time || last_track_time + 4 < now) { 
 					tcpup_track_stage1();
@@ -400,7 +401,7 @@ int main(int argc, char *argv[])
 					last_track_count = 0;
 				}
 
-				if (nready == 0) {
+				if (nready == 0 || _reload == 2) {
 					if (_reload && (newfd = (*link_ops->create)()) != -1) {
 						if (bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
 							close(netfd);
@@ -438,6 +439,7 @@ int main(int argc, char *argv[])
 				len = tcpup_frag_input(packet, len, 1500);
 				if (len <= 0 && have_target == 2) ll_addr = tmp_addr;
 				ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
+				if (ignore == -1) _reload = 2;
 				LOG_VERBOSE("send_data: %d\n", ignore);
 			}
 
@@ -476,7 +478,8 @@ int main(int argc, char *argv[])
 			packet = get_tcpup_data(&len);
 			if (packet != NULL) {
 				struct sockaddr *target = pull_conversation(SOT(&ll_addr), sizeof(ll_addr));
-				(*link_ops->send_data)(netfd, packet, len, target, sizeof(ll_addr));
+				error = (*link_ops->send_data)(netfd, packet, len, target, sizeof(ll_addr));
+				if (error == -1) _reload = 2;
 				last_track_enable = 1;
 				LOG_VERBOSE("send_data: %d\n", len);
 			}

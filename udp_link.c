@@ -10,6 +10,9 @@
 #include <config.h>
 #include <base_link.h>
 
+static int _ack_count = 0;
+static time_t _ack_start_time = 0;
+
 static unsigned char TUNNEL_PADDIND_DNS[] = {
 	0x20, 0x88, 0x81, 0x80, 0x00, 0x01, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x04, 0x77, 0x77, 0x77,
@@ -20,8 +23,7 @@ static unsigned char TUNNEL_PADDIND_DNS[] = {
 
 static int udp_low_link_create(void)
 {
-	int error;
-	int bufsiz, devfd, flags;
+	int bufsiz, devfd;
 
 	devfd = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -56,6 +58,9 @@ static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct socka
 	count = MIN(count, len);
 	packet_decrypt(htons(key), buf, packet + sizeof(TUNNEL_PADDIND_DNS), count);
 
+	_ack_start_time = 0;
+	_ack_count = 0;
+
 	return count;
 }
 
@@ -68,6 +73,15 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 	memcpy(_crypt_stream, TUNNEL_PADDIND_DNS, sizeof(TUNNEL_PADDIND_DNS));
 	memcpy(_crypt_stream + 14, &key, 2);
 	packet_encrypt(htons(key), _crypt_stream + sizeof(TUNNEL_PADDIND_DNS), buf, len);
+
+	if (get_ack_type() != ACK_TYPE_NONE) {
+		if (++_ack_count < 15) {
+			_ack_start_time = time(NULL);
+		} else if (_ack_start_time + 2 < time(NULL)) {
+			_ack_count = 0;
+			return -1;
+		}
+	}
 
 	protect_reset(IPPROTO_UDP, _crypt_stream, len, ll_addr, ll_len);
 	return sendto(devfd, _crypt_stream, len + sizeof(TUNNEL_PADDIND_DNS), 0, ll_addr, ll_len);

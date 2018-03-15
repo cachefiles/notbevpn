@@ -46,4 +46,8 @@ int vpn_tun_free(int tunfd);
 #define vpn_tun_free(p) close(p)
 #endif
 
+#define ACK_TYPE_NONE 0
+#define ACK_TYPE_NEED 1
+#define ACK_TYPE_MUST 2
+
 #endif
