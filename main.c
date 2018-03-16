@@ -352,6 +352,7 @@ int main(int argc, char *argv[])
 
 	setblockopt(netfd, 0);
 	setblockopt(tunfd, 0);
+	setblockopt(dnsfd, 0);
 
 	int nready = 0;
 	fd_set readfds;
@@ -364,7 +365,7 @@ int main(int argc, char *argv[])
 		struct timeval timeo = {};
 
 		int maxfd, bug_check = 0;
-		if (nready <= 0 || busy_loop > 1000) {
+		if (nready <= 0 || ++busy_loop > 1000) {
 			if (last_track_enable && tcpup_track_stage2()) {
 				last_track_enable = 0;
 				if ((packet = get_tcpup_data(&len)) != NULL) {
@@ -407,7 +408,7 @@ int main(int argc, char *argv[])
 							close(netfd);
 							netfd = newfd;
 							setblockopt(netfd, 0);
-							_reload = 0;
+							nready = _reload = 0;
 						} else {
 							LOG_DEBUG("bindto: %s:%d\n", inet_ntoa(so_addr.sin_addr), htons(so_addr.sin_port));
 							LOG_DEBUG("family: %d %d\n", so_addr.sin_family, newfd);
