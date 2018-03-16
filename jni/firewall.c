@@ -322,6 +322,7 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 #ifdef __ANDROID__
 				istether = is_tethering_dns(ip->ip_dst);
 #endif
+				set_ack_type(ACK_TYPE_NEED);
 				if ((nswrap || istether) &&
 						is_local(ip->ip_src) && CPTR(uh + 1) < (packet + len)) {
 					dest.sin_family = AF_INET;

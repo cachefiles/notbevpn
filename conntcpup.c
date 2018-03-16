@@ -95,12 +95,6 @@ uint16_t get_client_id()
 	return _cksum;
 }
 
-static int _ack_type = ACK_TYPE_NONE;
-int get_ack_type()
-{
-	return _ack_type;
-}
-
 static port_pool_t _tcp_pool = {};
 
 static void alloc_nat_slot(tcp_state_t *s, tcp_state_t *c, uint16_t port)
@@ -761,7 +755,7 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	ckpass[1] = tcp_checksum(0, _pkt_buf, _tcpup_len);
 
 	if (count > 0 || CHECK_FLAGS(up->th_flags, TH_SYN| TH_FIN| TH_RST)) {
-		_ack_type = count? ACK_TYPE_NEED: ACK_TYPE_MUST;
+		set_ack_type(count? ACK_TYPE_NEED: ACK_TYPE_MUST);
 		conn->last_dir = DIRECT_CLIENT_TO_SERVER;
 		conn->c.byte_sent += count;
 		conn->c.pkt_sent ++;
@@ -850,7 +844,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 	nat_conntrack_t *item, *conn = NULL;
 
 	up = (struct tcpuphdr *)packet;
-	_ack_type = ACK_TYPE_NONE;
+	set_ack_type(ACK_TYPE_NONE);
 	set_conversation(0, NULL);
 	if (up->th_conv == htonl(TCPUP_PROTO_UDP)) {
 		_tcpip_len = udpup_frag_input(packet, len, (uint8_t *)_tcp_buf, sizeof(_tcp_buf));
@@ -925,7 +919,7 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 
 	ip = (nat_iphdr_t *)packet; 
 
-	_ack_type = ACK_TYPE_NONE;
+	set_ack_type(ACK_TYPE_NONE);
 	set_conversation(0, NULL);
 	if (ip->ip_v == VERSION_IPV4) {
 		ip6 = NULL;

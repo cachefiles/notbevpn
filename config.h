@@ -51,4 +51,7 @@ int vpn_tun_free(int tunfd);
 #define ACK_TYPE_NEED 1
 #define ACK_TYPE_MUST 2
 
+int get_ack_type(void);
+int set_ack_type(int type);
+
 #endif

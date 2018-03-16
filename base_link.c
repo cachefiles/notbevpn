@@ -5,6 +5,18 @@
 
 #include <config.h>
 
+static int _ack_type = ACK_TYPE_NONE;
+
+int get_ack_type()
+{
+	return _ack_type;
+}
+
+int set_ack_type(int type)
+{
+	return _ack_type = type;
+}
+
 int packet_decrypt(unsigned short key, void *dst, const void *src, size_t len)
 {
 	int i;
