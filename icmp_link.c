@@ -118,10 +118,16 @@ static int icmp_low_link_adjust(void)
 	return LEN_PADDING_ICMP;
 }
 
+static int icmp_low_link_bind_addr(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+{
+	return 0;
+}
+
 struct low_link_ops icmp_ops = {
 	.create = icmp_low_link_create,
 	.get_adjust = icmp_low_link_adjust,
 	.send_data = icmp_low_link_send_data,
-	.recv_data = icmp_low_link_recv_data
+	.recv_data = icmp_low_link_recv_data,
+	.bind_addr = icmp_low_link_bind_addr
 };
 

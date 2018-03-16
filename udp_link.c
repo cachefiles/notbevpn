@@ -75,10 +75,10 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 	packet_encrypt(htons(key), _crypt_stream + sizeof(TUNNEL_PADDIND_DNS), buf, len);
 
 	if (get_ack_type() != ACK_TYPE_NONE) {
-		if (++_ack_count < 15) {
+		if (++_ack_count < 11) {
 			_ack_start_time = time(NULL);
 		} else if (_ack_start_time + 2 < time(NULL)) {
-			_ack_count = 0;
+			sendto(devfd, _crypt_stream, len + sizeof(TUNNEL_PADDIND_DNS), 0, ll_addr, ll_len);
 			return -1;
 		}
 	}
@@ -93,9 +93,21 @@ static int udp_low_link_adjust(void)
 	return LEN_PADDING_DNS + 8;
 }
 
+static int udp_low_link_bind_addr(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+{
+	struct sockaddr_in zero_addr = {};
+	if (_ack_count < 11)
+		return bind(sockfd, addr, addrlen);
+	zero_addr.sin_family = AF_INET;
+	zero_addr.sin_port   = 0;
+	zero_addr.sin_addr.s_addr   = htonl(INADDR_ANY);
+	return bind(sockfd, (const struct sockaddr *)&zero_addr, addrlen);
+}
+
 struct low_link_ops udp_ops = {
 	.create = udp_low_link_create,
 	.get_adjust = udp_low_link_adjust,
 	.send_data = udp_low_link_send_data,
-	.recv_data = udp_low_link_recv_data
+	.recv_data = udp_low_link_recv_data,
+	.bind_addr = udp_low_link_bind_addr
 };

@@ -41,6 +41,7 @@ struct low_link_ops {
 	int (*get_adjust)(void);
 	int (*send_data)(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len);
 	int (*recv_data)(int devfd, void *buf, size_t len, struct sockaddr *ll_addr, socklen_t *ll_len);
+	int (*bind_addr)(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 };
 
 int setblockopt(int fd, int block);

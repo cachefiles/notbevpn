@@ -309,7 +309,7 @@ static int bind_any_address(int netfd)
 	return error;
 }
 
-static int bind_last_address(int netfd, int which)
+static int bind_last_address(struct low_link_ops *ops, int netfd, int which)
 {
 	int error;
 	struct sockaddr_in sin_addr = _last_bind[which];
@@ -317,7 +317,7 @@ static int bind_last_address(int netfd, int which)
 	sin_addr.sin_family = AF_INET;
 	sin_addr.sin_addr.s_addr = 0;
 
-	error = bind(netfd, (struct sockaddr *)&sin_addr, sizeof(sin_addr));
+	error = (*ops->bind_addr)(netfd, (struct sockaddr *)&sin_addr, sizeof(sin_addr));
 	if (error != 0) {
 		goto ignore_error;
 	}
@@ -474,7 +474,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 	if (netfd == -1) {
 		netfd = link_ops->create();
 		assert (netfd != -1);
-		bind_last_address(netfd, which);
+		bind_last_address(link_ops, netfd, which);
 		add_pending_fd(netfd);
 		_link_fd = netfd;
 
@@ -497,7 +497,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		close(netfd);
 		netfd = link_ops->create();
 		assert (netfd != -1);
-		bind_last_address(netfd, which);
+		bind_last_address(link_ops, netfd, which);
 		add_pending_fd(netfd);
 		_link_fd = netfd;
 
