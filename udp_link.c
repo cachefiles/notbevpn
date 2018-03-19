@@ -36,6 +36,7 @@ static int udp_low_link_create(void)
 	setsockopt(devfd, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
 
 	setblockopt(devfd, 0);
+	_ack_count = 0;
 	return devfd;
 }
 
