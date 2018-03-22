@@ -22,6 +22,7 @@ int vpn_tun_free(int tunfd);
 #define	__aligned(x)	__attribute__((__aligned__(x)))
 #include <netdb.h>
 #include <unistd.h>
+#include <strings.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
 #include <arpa/inet.h>

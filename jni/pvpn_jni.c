@@ -61,10 +61,13 @@ extern struct low_link_ops udp_ops, icmp_ops;
 
 static int check_link_failure(int txretval)
 {
-	if (txretval == -1)
-		return (errno != ENOBUFS && errno != EAGAIN);
+	int badtx = 0;
+	if (txretval == -1) {
+		badtx = (errno != ENOBUFS && errno != EAGAIN);
+		LOG_DEBUG("check_link_failure: %d", errno);
+	}
 
-	return 0;
+	return badtx;
 }
 
 static int is_blocked(int tunfd, char *packet, size_t len, int *failure)
@@ -92,8 +95,6 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 	int ignore;
 	int nready = 0;
 	int loop_try = 0;
-	int failure_try = 0;
-	int failure_count[2] = {0};
 	char buf[2048];
 	fd_set readfds;
 	int tun_nbytes = 0, tun_npacket = 0;
@@ -112,9 +113,9 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 				if ((packet = get_tcpup_data(&len)) != NULL
 						&& _is_powersave == 0) {
 					ignore = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
-					LOG_DEBUG("send probe data: %d\n", len);
 					_probe_sent++;
 					if (check_link_failure(ignore)) return -1;
+					LOG_DEBUG("send probe data: %d\n", len);
 				}
 			}
 
@@ -136,14 +137,10 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 				return -1;
 			}
 
-			if (_linkfailure || (failure_count[0] > 15 &&
-						failure_count[1] > 15 && failure_try > 15)) {
+			if (_linkfailure) {
 				_linkfailure = 0;
 				return -1;
 			}
-
-			failure_count[1] = failure_count[0];
-			failure_count[0] = failure_try;
 
 			if (nready == 0 || ++last_track_count >= 20) {
 				time_t now = time(NULL);
@@ -172,7 +169,6 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 			}
 
 			if (len > 0) {
-				failure_try = 0;
 				net_npacket++;
 				net_nbytes += len;
 				len = tcpup_frag_input(packet, len, 1500);
@@ -208,8 +204,8 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 
 			_total_tx_pkt++;
 			_total_tx_bytes += len;
-			if (is_blocked(tunfd, packet, len, &failure_try)) {
-				LOG_VERBOSE("ignore blocked data: %d\n", failure_try);
+			if (is_blocked(tunfd, packet, len, &ignore)) {
+				LOG_VERBOSE("ignore blocked data: %d\n", ignore);
 				continue;
 			}
 
@@ -230,7 +226,6 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 				// LOG_VERBOSE("send data: %d\n", ignore);
 				if (check_link_failure(ignore)) return -1;
 				last_track_enable = 1;
-				failure_try ++;
 			}
 		}
 
@@ -250,7 +245,6 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 
 			len = resolv_return(bufsize, packet, len, &tmp_addr);
 			if (len > 0) {
-				failure_try = 0;
 				len = tun_write(tunfd, packet, len);
 			}
 		}

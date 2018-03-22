@@ -27,7 +27,7 @@ static int udp_low_link_create(void)
 
 	devfd = socket(AF_INET, SOCK_DGRAM, 0);
 
-	LOG_DEBUG("UDP created: %d\n", devfd);
+	LOG_DEBUG("UDP created: %d %d\n", devfd, _ack_count);
 	TUNNEL_PADDIND_DNS[2] &= ~0x80;
 	TUNNEL_PADDIND_DNS[3] &= ~0x80;
 

@@ -336,7 +336,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 	for (i = 0; i < parser.head.answer; i++) {
 		res = &parser.answer[i];
 
-		LOG_DEBUG("an %d: %s T%d\n", i, res->domain, res->type);
+		LOG_VERBOSE("an %d: %s T%d\n", i, res->domain, res->type);
 		if (strcasecmp(res->domain, crypt) == 0) {
 			res->domain = parser.question[0].domain;
 		}
