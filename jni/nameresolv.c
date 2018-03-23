@@ -346,8 +346,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 		}
 
 		if (res->type == NSTYPE_A && have_suffixes == 0) {
-			uint32_t val = htonl(*(uint32_t *)res->value);
-			add_dns_route((uint8_t *)&val);
+			add_dns_route(res->value);
 		}
 	}
 

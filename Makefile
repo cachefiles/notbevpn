@@ -15,7 +15,7 @@ endif
 BIN_FMT_TARGET := $(shell $(THIS_PATH)/getos.sh CC=$(CC))
 LDLIBS = -lresolv
 
-toyclient: conntrack.o conntcpup.o socksify.o tcpuputils.o conndgram.o portpool.o udp_link.o icmp_link.o base_link.o jni/dnsproto.o jni/nameresolv.o jni/firewall.o jni/router.o tx_debug.o conversation.o tcp_link.o main.o
+toyclient: conntrack.o conntcpup.o socksify.o tcpuputils.o conndgram.o portpool.o udp_link.o icmp_link.o base_link.o dnsproto.o jni/nameresolv.o jni/firewall.o jni/router.o tx_debug.o conversation.o tcp_link.o main.o
 	$(CC) -o $@ $(LDFLAGS) $^ $(LDLIBS)
 
 socksify.o: socksify_$(BIN_FMT_TARGET).c
