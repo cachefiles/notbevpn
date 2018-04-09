@@ -653,7 +653,7 @@ ssize_t tcpup_frag_rst(struct tcpuphdr *th, uint8_t *packet)
 
 	u_short *ckpass = (u_short *)&th->th_ckpass;
 	th->th_ckpass = 0;
-	ckpass[0] = sizeof(*th);
+	ckpass[0] = htons(sizeof(*th));
 	ckpass[1] = tcp_checksum(0, th, sizeof(*th));
 
 	return sizeof(*th);
@@ -751,7 +751,7 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	up->th_conv = conn->s.ip_src.s_addr;
 	u_short *ckpass = (u_short *)&up->th_ckpass;
 	assert(up->th_ckpass == 0);
-	ckpass[0] = _tcpup_len;
+	ckpass[0] = htons(_tcpup_len);
 	ckpass[1] = tcp_checksum(0, _pkt_buf, _tcpup_len);
 
 	if (count > 0 || CHECK_FLAGS(up->th_flags, TH_SYN| TH_FIN| TH_RST)) {
@@ -858,7 +858,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 	}
 
 	u_short *ckpass = (u_short *)&up->th_ckpass;
-	if (ckpass[0] != len && up->th_ckpass) {
+	if (ntohs(ckpass[0]) != len && up->th_ckpass) {
 		log_error("invalid packet length: %x %x len=%d\n", ckpass[0], up->th_ckpass, len);
 		return 0;
 	}
@@ -1090,9 +1090,9 @@ found:
 
 			u_short *ckpass = (u_short *)&tuh->th_ckpass;
 			tuh->th_ckpass = 0;
-			ckpass[0] = _tcpup_len;
+			ckpass[0] = htons(_tcpup_len);
 			ckpass[1] = tcp_checksum(0, _pkt_buf, _tcpup_len);
-			log_verbose("tcpup_track_stage2: %ld, %p, %x %x %s\n",
+			log_error("tcpup_track_stage2: %ld, %p, %x %x %s\n",
 					_tcpup_len, full_item, full_item->c.flags, full_item->s.flags & TH_FIN, inet_ntoa(full_item->c.ip_dst));
 			full_item->probe++;
 			return 1;
