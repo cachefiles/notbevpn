@@ -5,6 +5,8 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <arpa/nameser.h>
+
+#include <netinet/in.h>
 #include <resolv.h>
 
 #include "dnsproto.h"

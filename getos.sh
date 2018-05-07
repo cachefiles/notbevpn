@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 until [ -z "$1" ]  # Until all parameters used up
 do
@@ -25,6 +25,11 @@ fi;
 
 if $CC -dM -E - < /dev/null | grep __WIN32__ > /dev/null; then
 	echo win32;
+	exit;
+fi;
+
+if $CC -dM -E - < /dev/null | grep __FreeBSD__ > /dev/null; then
+	echo freebsd;
 	exit;
 fi;
 

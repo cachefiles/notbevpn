@@ -5,6 +5,9 @@
 #include <assert.h>
 #include <errno.h>
 
+#include <sys/types.h>
+#include <sys/wait.h>
+
 #include <config.h>
 #include <base_link.h>
 #include <bsdinet/tcpup.h>

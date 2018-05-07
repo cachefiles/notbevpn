@@ -35,11 +35,13 @@ int vpn_tun_free(int tunfd);
 #define vpn_tun_free(p) close(p)
 #endif
 
-#ifndef __BSD_VISIBLE
+#if defined(__FreeBSD__) || !defined(__BSD_VISIBLE)
 #include <netdb.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/queue.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
