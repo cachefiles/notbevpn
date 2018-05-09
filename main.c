@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <signal.h>
+#include <netinet/in.h>
 
 #include <config.h>
 #include <base_link.h>
@@ -48,6 +49,7 @@ static void usage(const char *prog_name)
 	fprintf(stderr, "\t-t <tun-device> use this as tun device name, default tun0!\n");
 	fprintf(stderr, "\t-s <config-script> the path to config this interface when tun is up, default ./ifup.tun0!\n");
 	fprintf(stderr, "\t-i <interface-address> interface address, local address use for outgoing/incoming packet!\n");
+	fprintf(stderr, "\t-I <bind-to-device> only valid for linux!\n");
 	fprintf(stderr, "\tall @address should use this format <host:port> OR <port>\n");
 	fprintf(stderr, "\n");
 
@@ -249,12 +251,35 @@ static void handle_reload(int sig)
 	return;
 }
 
+static void bind_to_device(int sockfd, const char *iface)
+{
+	if (iface == NULL) {
+		return;
+	}
+
+#ifdef SO_BINDTODEVICE
+	if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, iface, IFNAMSIZ-1) == -1)  {
+		perror("setsockopt SO_BINDTODEVICE");
+	}
+#endif
+
+#ifdef  IP_RECVIF
+	const int on = 1;
+	if (setsockopt(sockfd, IPPROTO_IP, IP_RECVIF, &on, sizeof(on)) < 0) {
+		perror("setsockopt IP_RECVIF");
+	}
+#endif
+
+	return;
+}
+
 int main(int argc, char *argv[])
 {
 	int i;
 	int tunfd, len;
 	int busy_loop = 0;
 	int new_dev_mtu = -1;
+	const char *iface = NULL;
 	const char *proto = "icmp";
 	const char *script = NULL;
 	const char *tun_name = DEFAULT_TUN_NAME;
@@ -272,6 +297,9 @@ int main(int argc, char *argv[])
 		if (strcmp(argv[i], "-h") == 0) {
 			usage(argv[0]);
 			return 0;
+		} else if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) {
+			iface = argv[i + 1];
+			i++;
 		} else if (strcmp(argv[i], "-mtu") == 0 && i + 1 < argc) {
 			int mtu = atoi(argv[i + 1]);
 			if (mtu > 0 && mtu < 1500) new_dev_mtu = mtu;
@@ -341,6 +369,7 @@ int main(int argc, char *argv[])
 	assert(dnsfd != -1);
 
 	setreuid(save_uid, save_uid);
+	bind_to_device(netfd, iface);
 	error = bind(netfd, SOT(&so_addr), sizeof(so_addr));
 	assert(error == 0);
 
@@ -404,9 +433,10 @@ int main(int argc, char *argv[])
 
 				if (nready == 0 || _reload == 2) {
 					if (_reload && (newfd = (*link_ops->create)()) != -1) {
+						close(netfd);
+						netfd = newfd;
+						bind_to_device(netfd, iface);
 						if (bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
-							close(netfd);
-							netfd = newfd;
 							setblockopt(netfd, 0);
 							nready = _reload = 0;
 						} else {
@@ -492,7 +522,7 @@ int main(int argc, char *argv[])
 			socklen_t tmp_alen = sizeof(tmp_addr);
 			bug_check++;
 
-			LOG_DEBUG("receive dns data\n");
+			LOG_VERBOSE("receive dns data\n");
 			len = recvfrom(dnsfd, packet, bufsize, 0, SOT(&tmp_addr), &tmp_alen); 
 			if (len < 0) {
 				FD_CLR(dnsfd, &readfds);
