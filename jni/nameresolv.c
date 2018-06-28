@@ -200,7 +200,8 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 #ifdef __ANDROID__
 	flags = get_dns_addr(dest, tethering);
 #else
-	dest->sin_addr.s_addr = inet_addr("114.114.114.114");
+	_save_addr = *dest;
+	dest->sin_addr.s_addr = inet_addr("10.143.22.118");
 	flags = 1;
 #endif
 
@@ -249,11 +250,28 @@ static int add_dns_route(const uint8_t *dest)
 {
 	return 0;
 }
+
+static int free_dns_route(void)
+{
+	return 0;
+}
 #else
 
 static int _pending_count = 0;
 static int _pending_route[512];
 static pid_t _add_route_proc = -1;
+
+static int free_dns_route(void)
+{
+	int exitcode = 0;
+
+	if (_add_route_proc != -1 &&
+			waitpid(_add_route_proc, &exitcode,  WNOHANG) == _add_route_proc) {
+		_add_route_proc = -1;
+	}
+
+	return 0;
+}
 
 static int add_dns_route(const uint8_t *dest)
 {
@@ -268,7 +286,7 @@ static int add_dns_route(const uint8_t *dest)
 		} else {
 			if (_pending_count < 512)
 				_pending_route[_pending_count++] = *(int *)dest;
-			LOG_DEBUG("waitpid failure: %d\n", errno);
+			LOG_VERBOSE("waitpid failure: %d\n", errno);
 			return 0;
 		}
 	}
@@ -301,14 +319,20 @@ static int add_dns_route(const uint8_t *dest)
 }
 #endif
 
+
+struct dns_cname {
+    const char *alias;
+};
+
 int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *from)
 {
 	int i;
 	int have_suffixes = 0;
 
 	char name[256];
-	char crypt[256];
 	char sndbuf[2048];
+	char * crypt = NULL;
+	char * plain = NULL;
 
 	struct dns_parser parser;
 	struct dns_question *que;
@@ -322,7 +346,6 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 	for (i = 0; i < parser.head.question; i++) {
 		que = &parser.question[i];
 
-		strcpy(crypt, que->domain);
 		strcpy(name, que->domain);
 		decrypt_domain(name);
 
@@ -330,28 +353,39 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 			have_suffixes = 1;
 		}
 
-		que->domain = add_domain(&parser, name);
+		crypt = que->domain;
+		que->domain = plain = add_domain(&parser, name);
 		if (que->domain == NULL) {
 			return -1;
 		}
 	}
 
+	int nanswer = 0;
 	for (i = 0; i < parser.head.answer; i++) {
 		res = &parser.answer[i];
+		struct dns_cname *ptr = res->value;
 
 		LOG_VERBOSE("an %d: %s T%d\n", i, res->domain, res->type);
-		if (strcasecmp(res->domain, crypt) == 0) {
-			res->domain = parser.question[0].domain;
-		}
-
 		if (res->type == NSTYPE_CNAME) {
 			have_suffixes = 1;
+			if (strcasecmp(plain, ptr->alias) == 0) {
+				continue;
+			}
+		}
+
+		if (strcasecmp(crypt, res->domain) == 0) {
+			res->domain = plain;
 		}
 
 		if (res->type == NSTYPE_A && have_suffixes == 0) {
-			add_dns_route(res->value);
+			uint32_t val = htonl(*(uint32_t *)res->value);
+			add_dns_route((uint8_t *)&val);
 		}
+
+		if (nanswer++ < i)
+			parser.answer[nanswer - 1] = *res;
 	}
+	parser.head.answer = nanswer;
 
 	nat_iphdr_t *ip;
 	nat_udphdr_t *uh;
@@ -377,5 +411,6 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 		return maxsize;
 	}
 
+	free_dns_route();
 	return -1;
 }
