@@ -30,6 +30,7 @@ int is_tethering_dns(struct in_addr);
 int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from, int nswrap);
 
 static const char _inet_prefix[] = "104.16.0.0/12 184.84.0.0/14 23.64.0.0/14 23.32.0.0/11 96.6.0.0/15 162.125.0.0/16 203.0.0.0/8 66.6.32.0/20 199.59.148.0/22 31.13.70.0/23 108.160.160.0/20 8.8.0.0/16 64.18.0.0/20 64.233.160.0/19 66.102.0.0/20 66.249.80.0/20 72.14.192.0/18 74.125.0.0/16 108.177.8.0/21 173.194.0.0/16 207.126.144.0/20 209.85.128.0/17 216.58.192.0/19 216.239.32.0/19 172.217.0.0/19";
+static const int _firewall_always_off = 1;
 
 int is_google_net(struct in_addr net)
 {
@@ -40,7 +41,7 @@ int is_google_net(struct in_addr net)
 		_is_initilize = 1;
 	}
 
-	return route_get(net) != NULL;
+	return route_get(net) != NULL || _firewall_always_off;
 }
 
 static uint16_t update_cksum(uint16_t old, int delta)
@@ -231,7 +232,7 @@ int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t 
 		switch(htons(uh->uh_dport)) {
 			case 443:
 				LOG_DEBUG("block!%d udp/443 to: :%d -> %s\n", tunfd, htons(uh->uh_sport), inet_ntoa(ip->ip_dst));
-				return 1;
+				return _firewall_always_off == 0;
 
 			case 53:
 				LOG_DEBUG("convert!%d udp/53 to: :%d -> %s\n", tunfd, htons(uh->uh_sport), inet_ntoa(ip->ip_dst));

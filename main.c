@@ -208,7 +208,6 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjus
 }
 
 extern struct low_link_ops udp_ops;
-extern struct low_link_ops tcp_ops;
 extern struct low_link_ops icmp_ops;
 
 ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit);
@@ -258,7 +257,7 @@ static void bind_to_device(int sockfd, const char *iface)
 	}
 
 #ifdef SO_BINDTODEVICE
-	if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, iface, IFNAMSIZ-1) == -1)  {
+	if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, iface, strlen(iface) +1) == -1)  {
 		perror("setsockopt SO_BINDTODEVICE");
 	}
 #endif
@@ -347,8 +346,6 @@ int main(int argc, char *argv[])
 		return run_tun2socks(tunfd, &so_addr, &ll_addr);
 	} else if (0 == strcmp(proto, "udp")) {
 		link_ops = &udp_ops;
-	} else if (0 == strcmp(proto, "raw")) {
-		link_ops = &tcp_ops;
 	} else if (0 == strcmp(proto, "icmp")) {
 		link_ops = &icmp_ops;
 	} else {
@@ -369,9 +366,11 @@ int main(int argc, char *argv[])
 	assert(dnsfd != -1);
 
 	setreuid(save_uid, save_uid);
+#if 0
 	bind_to_device(netfd, iface);
 	error = bind(netfd, SOT(&so_addr), sizeof(so_addr));
 	assert(error == 0);
+#endif
 
 	int last_track_count = 0;
 	int last_track_enable = 0;

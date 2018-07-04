@@ -33,8 +33,10 @@ int log_tag_putlog(const char *tag, const char *fmt, ...);
 #define LOG_VERBOSE(fmt, args...) log_tag_putlog("V", fmt, ##args)
 #endif
 
+#ifndef MIN
 #define MIN(a, b) ((a) < (b)? (a): (b))
 #define MAX(a, b) ((a) < (b)? (b): (a))
+#endif
 
 struct low_link_ops {
 	int (*create)(void);

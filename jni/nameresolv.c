@@ -203,6 +203,28 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 	_save_addr = *dest;
 	dest->sin_addr.s_addr = inet_addr("10.143.22.118");
 	flags = 1;
+
+	static int dns_override = 0;
+	static struct sockaddr_in _relay = {};
+	if (dns_override || getenv("DNSRELAY")) {
+		char *ptr, _dummy[512];
+		if (dns_override == 0) {
+			strcpy(_dummy, getenv("DNSRELAY"));
+			_relay.sin_family = AF_INET;
+			_relay.sin_port   = htons(53);
+			ptr = strchr(_dummy, ':');
+			if (ptr != NULL) {
+				*ptr++= 0;
+				_relay.sin_port = htons(atoi(ptr));
+			}
+			_relay.sin_addr.s_addr = inet_addr(_dummy);
+			dns_override = 1;
+		}
+#ifdef SO_BINDTODEVICE
+		setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, "", 0);
+#endif
+		*dest = _relay;
+	}
 #endif
 
 	resolv_record(parser.head.ident, from, &_save_addr, flags);
@@ -248,6 +270,7 @@ static int udp_mktpl(nat_udphdr_t *uh, struct sockaddr_in *from, struct sockaddr
 #ifdef __ANDROID__
 static int add_dns_route(const uint8_t *dest)
 {
+	LOG_DEBUG("not supported");
 	return 0;
 }
 
@@ -290,6 +313,7 @@ static int add_dns_route(const uint8_t *dest)
 			return 0;
 		}
 	}
+	LOG_DEBUG("add_dns_route: %x\n", dest[0]);
 
 	_add_route_proc = fork();
 	if (_add_route_proc > 0) {
@@ -298,7 +322,7 @@ static int add_dns_route(const uint8_t *dest)
 	}
 
 	if (_add_route_proc == 0) {
-#if 0
+#if 1
 		int i;
 		char subnet[160];
 		snprintf(subnet, sizeof(subnet), "route add -net %d.%d.%d.0/24 -interface utun1", dest[0], dest[1], dest[2]);
@@ -308,7 +332,7 @@ static int add_dns_route(const uint8_t *dest)
 		for (i = 0; i < _pending_count; i++) {
 			dest = (uint8_t *)&_pending_route[i];
 			snprintf(subnet, sizeof(subnet), "route add -net %d.%d.%d.0/24 -interface utun1", dest[0], dest[1], dest[2]);
-			LOG_DEBUG("cmd_0 %s\n", subnet);
+			LOG_DEBUG("cmd_1 %s\n", subnet);
 			system(subnet);
 		}
 #endif
@@ -350,6 +374,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 		decrypt_domain(name);
 
 		if (strcasestr(name, "yrli.bid")) {
+			LOG_DEBUG("domain is %s", name);
 			have_suffixes = 1;
 		}
 
@@ -366,6 +391,10 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 		struct dns_cname *ptr = res->value;
 
 		LOG_VERBOSE("an %d: %s T%d\n", i, res->domain, res->type);
+		if (strcasecmp(res->domain, crypt) == 0) {
+			res->domain = parser.question[0].domain;
+		}
+
 		if (res->type == NSTYPE_CNAME) {
 			have_suffixes = 1;
 			if (strcasecmp(plain, ptr->alias) == 0) {
@@ -378,12 +407,15 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 		}
 
 		if (res->type == NSTYPE_A && have_suffixes == 0) {
-			uint32_t val = htonl(*(uint32_t *)res->value);
-			add_dns_route((uint8_t *)&val);
+			add_dns_route(res->value);
 		}
 
 		if (nanswer++ < i)
 			parser.answer[nanswer - 1] = *res;
+
+		if (res->type == NSTYPE_A && have_suffixes == 1) {
+			add_dns_route(res->value);
+		}
 	}
 	parser.head.answer = nanswer;
 
