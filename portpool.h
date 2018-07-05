@@ -9,6 +9,7 @@ typedef struct port_pool_s {
 } port_pool_t;
 
 uint16_t alloc_nat_port(port_pool_t *pool);
+uint16_t pick_nat_port(port_pool_t *pool, uint16_t port);
 uint16_t use_nat_port(port_pool_t *pool, uint16_t port);
 uint16_t free_nat_port(port_pool_t *pool, uint16_t port);
 

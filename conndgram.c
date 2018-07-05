@@ -172,7 +172,7 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 	time_t now;
 	nat_iphdr_t *ip;
 	nat_conntrack_t *conn;
-	unsigned short nat_port = alloc_nat_port(&_udp_pool);
+	unsigned short nat_port = pick_nat_port(&_udp_pool, sport);
 
 	now = time(NULL);
 	if (nat_port == 0) {
@@ -313,7 +313,7 @@ static nat_conntrack_t * newconn_ipv6(uint8_t *packet, uint16_t sport, uint16_t 
 	time_t now;
 	nat_ip6hdr_t *ip;
 	nat_conntrack_t *conn;
-	unsigned short nat_port = alloc_nat_port(&_udp_pool);
+	unsigned short nat_port = pick_nat_port(&_udp_pool, sport);
 
 	now = time(NULL);
 	if (nat_port == 0) {
@@ -423,7 +423,6 @@ static nat_conntrack_t * newconn_tcpup(struct udpuphdr4 *hdr)
 		}
 	}
 
-free_conn:
 	log_verbose("newconn: %p\n", conn);
 	return conn;
 }
@@ -436,7 +435,7 @@ static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *
 	const uint8_t *data_start = NULL;
 	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 
-	int count, offset;
+	int count;
 	struct udpuphdr4 *up = (struct udpuphdr4 *)(buf + sizeof(_proto_tag));
 
 	_proto_tag[0] = htonl(TCPUP_PROTO_UDP);
@@ -476,7 +475,7 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 	const uint8_t *data_start = NULL;
 	nat_ip6hdr_t *ip = (nat_ip6hdr_t *)packet;
 
-	int count, offset;
+	int count;
 	struct udpuphdr6 *up = (struct udpuphdr6 *)(buf + sizeof(_proto_tag));
 
 	assert(limit > sizeof(*up) + sizeof(_proto_tag));
@@ -652,10 +651,9 @@ found:
 ssize_t udpip_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 {
 	nat_iphdr_t *ip;
-	udp_state_t *udpcb;
 
 	nat_ip6hdr_t *ip6;
-	nat_udphdr_t *uh, h1;
+	nat_udphdr_t *uh;
 
 	nat_conntrack_t *conn;
 	nat_conntrack_ops *ops;

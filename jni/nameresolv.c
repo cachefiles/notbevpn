@@ -221,7 +221,7 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 			dns_override = 1;
 		}
 #ifdef SO_BINDTODEVICE
-		setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, "", 0);
+		setsockopt(dnsfd, SOL_SOCKET, SO_BINDTODEVICE, "", 0);
 #endif
 		*dest = _relay;
 	}

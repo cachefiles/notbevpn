@@ -569,7 +569,6 @@ static nat_conntrack_ops cok6_conntrack_ops = {
 
 static int ip_nat_fast(tcp_state_t *tcpcb, uint8_t *packet)
 {
-	uint16_t d0, d1;
 	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 	xchg(ip->ip_src, ip->ip_dst, struct in_addr);
 	return 0;
@@ -577,7 +576,7 @@ static int ip_nat_fast(tcp_state_t *tcpcb, uint8_t *packet)
 
 static nat_conntrack_t * lookup_fast(uint8_t *packet, uint16_t sport, uint16_t dport)
 {
-	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
+	// nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 	static nat_conntrack_t st;
 
 	if (sport == NAT_SSL_PORT) {
@@ -752,9 +751,8 @@ __attribute__((weak)) int socks5_cmd(void *buf, nat_iphdr_t *ip, nat_tcphdr_t *t
 static int handle_server_to_client(nat_conntrack_t *conn, nat_conntrack_ops *ops, nat_tcphdr_t *th, uint8_t *packet, size_t len)
 {
 	nat_tcphdr_t h1;
-	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
+	// nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 
-	int data_acked;
 	int datalen, seq_flag;
 	uint16_t old_len_flag, new_len_flag;
 	int state = tcp_state(th->th_flags);
@@ -870,7 +868,6 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	nat_tcphdr_t h1;
 	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 
-	uint16_t tlen;
 	int sublen, datalen, seq_flag;
 	uint16_t old_len_flag, new_len_flag;
 	int state = tcp_state(th->th_flags);
@@ -965,7 +962,7 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 	tcp_state_t *tcpcb;
 
 	nat_ip6hdr_t *ip6;
-	nat_tcphdr_t *th, h1;
+	nat_tcphdr_t *th;
 
 	nat_conntrack_t *conn;
 	nat_conntrack_ops *ops;

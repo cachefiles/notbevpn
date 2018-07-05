@@ -59,7 +59,7 @@ static u_char type_len_map[8] = {0x0, 0x04, 0x0, 0x0, 0x10};
 static int set_relay_info(u_char *target, int type, void *host, u_short port)
 {      
 	int len;
-	char *p, buf[60];
+	char *p;
 
 	p = (char *)target;
 	*p++ = (type & 0xff);
@@ -250,9 +250,9 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 	}
 
 	ip = (nat_iphdr_t *)packet;
+#if 0
 	uint32_t ip_src_xor = htonl(ip->ip_src.s_addr)^0x64400001;
 
-#if 0
 	if (ip_src_xor != 0 && (ip_src_xor & ~0xffff) == 0) {
 		log_verbose("loop detected: %s:%d -> %s:%d", P(&ip->ip_src), htons(sport), P(&ip->ip_dst), htons(dport));
 		conn = NULL;
@@ -357,7 +357,7 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 
 static int conngc_ipv6(int type, time_t now, nat_conntrack_t *skip)
 {
-	nat_conntrack_t *conn, *item, *next;
+	nat_conntrack_t *item, *next;
 
 	if (now < _ipv6_gc_time || now > _ipv6_gc_time + 120) {
 		_ipv6_gc_time = now;
@@ -469,8 +469,7 @@ struct _sockaddr_union {
 
 static int tcpup_expand_dest(struct _sockaddr_union *sau, uint8_t *dsaddr, size_t dslen)
 {
-	int len;
-	uint8_t *p, buf[60];
+	uint8_t *p;
 
 	p = dsaddr;
 	switch (*p) {
@@ -515,7 +514,7 @@ static nat_conntrack_t * newconn_tcpup(struct tcpuphdr *hdr)
 
 	struct tcpupopt to;
 	struct _sockaddr_union sau;
-	nat_conntrack_t *conn, *item, *next;
+	nat_conntrack_t *conn;
 
 	now = time(NULL);
 	tcpup_dooptions(&to, (u_char *)(hdr + 1), (hdr->th_opten << 2));
@@ -577,7 +576,6 @@ static nat_conntrack_t * (*__so_newconn)(struct tcpuphdr *hdr) = newconn_tcpup;
 
 ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 {
-	int acc = 0;
 	int flags = th->th_flags;
 
 	if (flags & TH_RST) {
@@ -909,10 +907,9 @@ found:
 ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 {
 	nat_iphdr_t *ip;
-	tcp_state_t *tcpcb;
 
 	nat_ip6hdr_t *ip6;
-	nat_tcphdr_t *th, h1;
+	nat_tcphdr_t *th;
 
 	nat_conntrack_t *conn;
 	nat_conntrack_ops *ops;

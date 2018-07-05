@@ -17,7 +17,18 @@ uint16_t use_nat_port(port_pool_t *pool, uint16_t port)
 	assert(old != pool->_nat_port_bitmap[index]);
 	pool->_nat_count++;
 
-	return htons(port + 1024);
+	return (port);
+}
+
+uint16_t pick_nat_port(port_pool_t *pool, uint16_t port)
+{
+	int index = port / 32;
+	int offset = port % 32;
+	uint32_t bitmap = pool->_nat_port_bitmap[index];
+
+	if (bitmap & (1 << offset))
+		return alloc_nat_port(pool);
+	return port;
 }
 
 #define USER_PORT_COUNT (65536 - 1024)
@@ -28,6 +39,8 @@ uint16_t alloc_nat_port(port_pool_t *pool)
 	int index, offset, bound;
 
 	pool->_nat_port_bitmap[0] = 0xffffffff;
+	pool->_nat_port_bitmap[65535/32] = 0xffffffff;
+
 	if (pool->_nat_count >= USER_PORT_COUNT) {
 		return 0;
 	}
@@ -90,7 +103,7 @@ uint16_t free_nat_port(port_pool_t *pool, uint16_t port)
 {
 	int index, offset;
 
-	port = htons(port) - 1024;
+	port = port;
 	index = (port / 32);
 	offset = (port % 32);
 

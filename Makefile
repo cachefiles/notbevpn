@@ -1,6 +1,6 @@
 THIS_PATH := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-CFLAGS += -g -Wall
+CFLAGS += -g -Wall -D_GNU_SOURCE
 CFLAGS += -I$(THIS_PATH) -I$(THIS_PATH)/jni
 VPATH  := $(THIS_PATH)
 
