@@ -6,7 +6,6 @@
 #include <ctype.h>
 #include <time.h>
 #include <signal.h>
-#include <netinet/in.h>
 
 #include <config.h>
 #include <base_link.h>

@@ -207,8 +207,8 @@ static nat_conntrack_t * newconn_ipv4(uint8_t *packet, uint16_t sport, uint16_t 
 		alloc_nat_slot(&conn->s, &conn->c, nat_port);
 		LIST_INSERT_HEAD(&_ipv4_header, conn, entry);
 
-		log_verbose("new datagram connection: %p, %d %s:%d -> %s:%d\n",
-				conn, _udp_pool._nat_count, P(&ip->ip_src), htons(sport), P(&ip->ip_dst), htons(dport));
+		log_verbose("new datagram connection: %p, %x, %d %s:%d -> %s:%d\n",
+				conn, conn->s.ip_src.s_addr, _udp_pool._nat_count, P(&ip->ip_src), htons(sport), P(&ip->ip_dst), htons(dport));
 	}
 
 free_conn:

@@ -10,6 +10,10 @@
 #include <bsdinet/tcpup.h>
 #include <router.h>
 
+#ifndef ENOBUFS
+#define ENOBUFS -111
+#endif
+
 typedef unsigned char uint8_t;
 
 typedef struct ip nat_iphdr_t;

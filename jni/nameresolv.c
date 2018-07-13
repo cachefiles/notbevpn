@@ -6,7 +6,6 @@
 #include <errno.h>
 
 #include <sys/types.h>
-#include <sys/wait.h>
 
 #include <config.h>
 #include <base_link.h>
@@ -14,10 +13,13 @@
 
 #include "dnsproto.h"
 
+#ifndef WIN32
+#include <sys/wait.h>
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <arpa/nameser.h>
 #include <resolv.h>
+#endif
 
 typedef struct ip nat_iphdr_t;
 typedef struct tcphdr nat_tcphdr_t;
@@ -267,7 +269,7 @@ static int udp_mktpl(nat_udphdr_t *uh, struct sockaddr_in *from, struct sockaddr
 	return 0;
 }
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(WIN32)
 static int add_dns_route(const uint8_t *dest)
 {
 	LOG_DEBUG("not supported");

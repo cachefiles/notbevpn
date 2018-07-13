@@ -2,12 +2,19 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <arpa/inet.h>
 #include <assert.h>
+
+#ifndef WIN32
+#include <arpa/inet.h>
 #include <arpa/nameser.h>
 
-#include <netinet/in.h>
 #include <resolv.h>
+#include <netinet/in.h>
+#endif
+
+#ifdef WIN32
+#include <winsock2.h>
+#endif
 
 #include "dnsproto.h"
 
