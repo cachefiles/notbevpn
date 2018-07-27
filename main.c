@@ -277,6 +277,7 @@ int main(int argc, char *argv[])
 	int tunfd, len;
 	int busy_loop = 0;
 	int new_dev_mtu = -1;
+	const char *fdb = NULL;
 	const char *iface = NULL;
 	const char *proto = "icmp";
 	const char *script = NULL;
@@ -297,6 +298,9 @@ int main(int argc, char *argv[])
 			return 0;
 		} else if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) {
 			iface = argv[i + 1];
+			i++;
+		} else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
+			fdb = argv[i + 1];
 			i++;
 		} else if (strcmp(argv[i], "-mtu") == 0 && i + 1 < argc) {
 			int mtu = atoi(argv[i + 1]);
@@ -352,7 +356,15 @@ int main(int argc, char *argv[])
 		exit(0);
 	}
 
-	update_tcp_mss((struct sockaddr *)&so_addr, SOT(&ll_addr), (*link_ops->get_adjust)());
+	if (fdb != NULL) {
+		int prefix;
+		char dest_buf[64];
+		/* -b 192.168.1.0/24 */
+		sscanf(fdb, "%[^/]/%d@%x", dest_buf, &prefix);
+		create_backward_network(inet_addr(dest_buf), htonl( -(1 << prefix)), SOT(&ll_addr));
+	}
+
+	update_tcp_mss(SOT(&so_addr), SOT(&ll_addr), (*link_ops->get_adjust)());
 	if (new_dev_mtu != -1) {
 		set_tcp_mss_by_mtu(new_dev_mtu - 20 - link_ops->get_adjust());
 		LOG_DEBUG("update mtu to: %d\n", new_dev_mtu);
@@ -365,11 +377,11 @@ int main(int argc, char *argv[])
 	assert(dnsfd != -1);
 
 	setreuid(save_uid, save_uid);
-#if 0
 	bind_to_device(netfd, iface);
-	error = bind(netfd, SOT(&so_addr), sizeof(so_addr));
-	assert(error == 0);
-#endif
+	if (have_target == 2) {
+		error = bind(netfd, SOT(&so_addr), sizeof(so_addr));
+		assert(error == 0);
+	}
 
 	int last_track_count = 0;
 	int last_track_enable = 0;

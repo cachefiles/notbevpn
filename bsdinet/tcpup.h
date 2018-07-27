@@ -93,6 +93,7 @@ int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
 ssize_t udpup_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit);
 ssize_t udpip_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit);
+u_long udpip_frag_dest();
 
 unsigned tcpip_checksum(unsigned cksum,  const void *buf, size_t len, int finish);
 int udp_checksum(unsigned cksum, void *buf, size_t len);

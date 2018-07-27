@@ -62,6 +62,11 @@ struct conversation_context {
 
 static struct conversation_context _conversation_source[MAX_CONVERSATION];
 
+int create_backward_network(size_t dest, size_t mask, struct sockaddr *hop)
+{
+	return 0;
+}
+
 struct sockaddr * pull_conversation(struct sockaddr *dest, size_t len)
 {
 	struct conversation_context *c;
@@ -134,7 +139,7 @@ struct sockaddr * push_conversation(struct sockaddr *dest, size_t len)
 	if (c->conversation != CLIENTID(_last_conversation_key)) {
 		return dest;
 	}
-	
+
 	assert (len < sizeof(c->u));
 	c->last_active = time(NULL);
 	memcpy(&c->u, dest, len);

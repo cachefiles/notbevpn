@@ -78,6 +78,14 @@ typedef struct _udp_state_t {
 uint16_t get_client_id();
 static port_pool_t _udp_pool = {};
 
+static u_long _udpip_dest = 0;
+u_long udpip_frag_dest()
+{
+	u_long val = _udpip_dest;
+	_udpip_dest = 0;
+	return val;
+}
+
 static void alloc_nat_slot(udp_state_t *s, udp_state_t *c, uint16_t port)
 {
 	uint16_t convs[2] = {};
@@ -249,7 +257,7 @@ static nat_conntrack_ops ip_conntrack_ops = {
 	.get_hdr_len = ipv4_hdr_len,
 	.set_hdr_buf = ipv4_hdr_setbuf,
 	.lookup = lookup_ipv4,
-	.newconn = newconn_ipv4
+	.newconn = newconn_ipv4,
 };
 
 static time_t _ipv6_gc_time = 0;
@@ -370,7 +378,7 @@ static nat_conntrack_ops ip6_conntrack_ops = {
 	.get_hdr_len = ipv6_hdr_len,
 	.set_hdr_buf = ipv6_hdr_setbuf,
 	.lookup = lookup_ipv6,
-	.newconn = newconn_ipv6
+	.newconn = newconn_ipv6,
 };
 
 #define TAG_SRC_IPV4 0x14
@@ -467,6 +475,7 @@ static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *
 	up->uh.u_conv = conn->s.ip_src.s_addr;
 	conn->s.ttl ++;
 
+	_udpip_dest = ip->ip_dst.s_addr;
 	return sizeof(*up) + count + sizeof(_proto_tag);
 }
 

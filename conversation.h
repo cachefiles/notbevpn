@@ -12,5 +12,6 @@ void * get_conversation_udata(void);
 struct sockaddr;
 struct sockaddr * pull_conversation(struct sockaddr *dest, size_t len);
 struct sockaddr * push_conversation(struct sockaddr *dest, size_t len);
+int add_peer_conversation(unsigned conv, size_t dest, size_t mask, struct sockaddr *hop);
 
 #endif

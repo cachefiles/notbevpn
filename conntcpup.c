@@ -326,7 +326,7 @@ static nat_conntrack_ops ip_conntrack_ops = {
 	.set_hdr_buf = ipv4_hdr_setbuf,
 	.set_relay_info = ipv4_set_relay,
 	.lookup = lookup_ipv4,
-	.newconn = newconn_ipv4
+	.newconn = newconn_ipv4,
 };
 
 static time_t _ipv6_gc_time = 0;
@@ -459,7 +459,7 @@ static nat_conntrack_ops ip6_conntrack_ops = {
 	.set_hdr_buf = ipv6_hdr_setbuf,
 	.set_relay_info = ipv6_set_relay,
 	.lookup = lookup_ipv6,
-	.newconn = newconn_ipv6
+	.newconn = newconn_ipv6,
 };
 
 struct _sockaddr_union {
@@ -658,6 +658,7 @@ ssize_t tcpup_frag_rst(struct tcpuphdr *th, uint8_t *packet)
 }
 
 static char _pkt_buf[2048];
+static u_long _pkt_dest = 0;
 static size_t _tcpup_len = 0;
 
 static char _tcp_buf[2048];
@@ -668,6 +669,7 @@ void * get_tcpup_data(int *len)
 	if (_tcpup_len == 0) return NULL;
 	if (len) *len = _tcpup_len;
 	_tcpup_len = 0;
+	_pkt_dest = 0;
 	return _pkt_buf;
 }
 
@@ -745,6 +747,7 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 	_tcpup_len = sizeof(*up) + offset + count;
 	assert(_tcpup_len < sizeof(_pkt_buf));
 	memcpy(((u_char *)(up + 1)) + offset, data_start, count);
+	_pkt_dest = conn->s.ip_dst.s_addr;
 
 	up->th_conv = conn->s.ip_src.s_addr;
 	u_short *ckpass = (u_short *)&up->th_ckpass;
@@ -969,6 +972,7 @@ ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit)
 
 process_udp:
 	_tcpup_len = udpip_frag_input(packet, len, (uint8_t *)_pkt_buf, sizeof(_pkt_buf));
+	_pkt_dest = udpip_frag_dest();
 	return 0;
 }
 
@@ -1079,6 +1083,7 @@ found:
 
 		if (full_item != NULL) {
 			_tcpup_len = full_item->track_len;
+			_pkt_dest  = full_item->s.ip_dst.s_addr;
 			full_item->track_round = _last_track_round;
 
 			memcpy(_pkt_buf, full_item->track_buf, _tcpup_len);
