@@ -10,8 +10,9 @@ void * set_conversation_udata(void *udata);
 void * get_conversation_udata(void);
 
 struct sockaddr;
-struct sockaddr * pull_conversation(struct sockaddr *dest, size_t len);
+struct sockaddr * pull_conversation(u_long dest);
 struct sockaddr * push_conversation(struct sockaddr *dest, size_t len);
-int add_peer_conversation(unsigned conv, size_t dest, size_t mask, struct sockaddr *hop);
+
+void set_default_gate(struct sockaddr *hop, size_t len);
 
 #endif

@@ -664,11 +664,12 @@ static size_t _tcpup_len = 0;
 static char _tcp_buf[2048];
 static size_t _tcpip_len = 0;
 
-void * get_tcpup_data(int *len)
+void * get_tcpup_data(int *len, u_long *dest)
 {
 	if (_tcpup_len == 0) return NULL;
 	if (len) *len = _tcpup_len;
 	_tcpup_len = 0;
+	if (dest) *dest = _pkt_dest;
 	_pkt_dest = 0;
 	return _pkt_buf;
 }

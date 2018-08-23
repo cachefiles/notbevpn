@@ -449,7 +449,7 @@ int ip_checksum(void *buf, size_t len)
     }
 
     if (len > 0) {
-        cksum += *(unsigned char *)digit;
+        cksum += *digit & htons(0xff00);
     }
 
     cksum1 = (cksum >> 16);

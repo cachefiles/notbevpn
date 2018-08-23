@@ -62,19 +62,56 @@ struct conversation_context {
 
 static struct conversation_context _conversation_source[MAX_CONVERSATION];
 
-int create_backward_network(size_t dest, size_t mask, struct sockaddr *hop)
+static struct net_rdb {
+    u_long dest;
+    u_long mask;
+	u_long peerhop;
+} _route_base[100];
+static int _route_count = 0;
+static union { struct sockaddr_in in; struct sockaddr_in6 in6; struct sockaddr sa; } _gateway;
+
+void set_default_gate(struct sockaddr *hop, size_t len)
 {
-	return 0;
+	if (len <= sizeof(_gateway))
+		memcpy(&_gateway, hop, len);
+	else
+		memcpy(&_gateway, hop, sizeof(_gateway));
+	return ;
 }
 
-struct sockaddr * pull_conversation(struct sockaddr *dest, size_t len)
+struct sockaddr * find_route(u_long dest)
+{
+	int i;
+	int cookie = 0;
+    struct net_rdb *pdb;
+    struct conversation_context *pcc;
+
+    for (i = 0; i < _route_count; i++) {
+		pdb = &_route_base[i];
+		if (pdb->dest == (pdb->mask & dest)) {
+			cookie = pdb->peerhop;
+			break;
+		}
+    }
+
+	for (i = 0; i < MAX_CONVERSATION; i++) {
+		pcc = &_conversation_source[i];
+		if (pcc->conversation == cookie) {
+			return SOT(&pcc->u);
+		}
+	}
+
+    return &_gateway.sa;
+}
+
+struct sockaddr * pull_conversation(u_long dest)
 {
 	struct conversation_context *c;
 
 	c = (struct conversation_context *)get_conversation_udata();
 	if (c == NULL || c < _conversation_source
 			|| c >= _conversation_source + MAX_CONVERSATION) {
-		return dest;
+		return find_route(dest);
 	}
 
 	if (c->last_active + 30 <= time(NULL)) {

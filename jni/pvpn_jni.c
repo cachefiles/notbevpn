@@ -26,7 +26,7 @@ int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t 
 int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *pfailure);
 int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
 
-char * get_tcpup_data(int *len);
+char * get_tcpup_data(int *len, u_long *dest);
 char * get_tcpip_data(int *len);
 
 ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit);
@@ -110,7 +110,7 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 		if (nready <= 0 || loop_try > 1000) {
 			if (last_track_enable && tcpup_track_stage2()) {
 				last_track_enable = 0;
-				if ((packet = get_tcpup_data(&len)) != NULL
+				if ((packet = get_tcpup_data(&len, NULL)) != NULL
 						&& _is_powersave == 0) {
 					ignore = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
 					_probe_sent++;
@@ -220,7 +220,7 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 				}
 			}
 
-			packet = get_tcpup_data(&len);
+			packet = get_tcpup_data(&len, NULL);
 			if (packet != NULL) {
 				ignore = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
 				// LOG_VERBOSE("send data: %d\n", ignore);

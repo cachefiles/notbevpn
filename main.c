@@ -21,7 +21,7 @@
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
-char * get_tcpup_data(int *len);
+char * get_tcpup_data(int *len, u_long *dest);
 char * get_tcpip_data(int *len);
 
 int vpn_tun_alloc(const char *dev);
@@ -361,7 +361,6 @@ int main(int argc, char *argv[])
 		char dest_buf[64];
 		/* -b 192.168.1.0/24 */
 		sscanf(fdb, "%[^/]/%d@%x", dest_buf, &prefix);
-		create_backward_network(inet_addr(dest_buf), htonl( -(1 << prefix)), SOT(&ll_addr));
 	}
 
 	update_tcp_mss(SOT(&so_addr), SOT(&ll_addr), (*link_ops->get_adjust)());
@@ -397,6 +396,7 @@ int main(int argc, char *argv[])
 	fd_set readfds;
 
 	FD_ZERO(&readfds);
+	set_default_gate(SOT(&ll_addr), sizeof(ll_addr));
 	for ( ; ; ) {
 		int ignore;
 		int newfd;
@@ -406,8 +406,9 @@ int main(int argc, char *argv[])
 		int maxfd, bug_check = 0;
 		if (nready <= 0 || ++busy_loop > 1000) {
 			if (last_track_enable && tcpup_track_stage2()) {
+				u_long dest = 0;
 				last_track_enable = 0;
-				if ((packet = get_tcpup_data(&len)) != NULL) {
+				if ((packet = get_tcpup_data(&len, &dest)) != NULL) {
 					error = (*link_ops->send_data)(netfd, packet, len, SOT(&ll_addr), sizeof(ll_addr));
 					LOG_DEBUG("send probe data: %d\n", len);
 					if (error == -1) _reload = 2;
@@ -462,6 +463,7 @@ int main(int argc, char *argv[])
 
 		if (FD_ISSET(netfd, &readfds)) {
 			int bufsize = 1500;
+			u_long dest = 0;
 			socklen_t tmp_alen = sizeof(tmp_addr);
 
 			bug_check++;
@@ -494,6 +496,7 @@ int main(int argc, char *argv[])
 
 		if (FD_ISSET(tunfd, &readfds)) {
 			bug_check++;
+			u_long dest = 0;
 			packet = (buf + 60);
 			len = tun_read(tunfd, packet, 1500);
 			if (len < 0) {
@@ -516,9 +519,10 @@ int main(int argc, char *argv[])
 				LOG_VERBOSE("tun_write: %d\n", ignore);
 			}
 
-			packet = get_tcpup_data(&len);
+			packet = get_tcpup_data(&len, &dest);
 			if (packet != NULL) {
-				struct sockaddr *target = pull_conversation(SOT(&ll_addr), sizeof(ll_addr));
+				// SOT(&ll_addr), sizeof(ll_addr));
+				struct sockaddr *target = pull_conversation(dest);
 				error = (*link_ops->send_data)(netfd, packet, len, target, sizeof(ll_addr));
 				if (error == -1) _reload = 2;
 				last_track_enable = 1;
