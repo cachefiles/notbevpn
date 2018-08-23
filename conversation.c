@@ -82,7 +82,7 @@ void set_default_gate(struct sockaddr *hop, size_t len)
 struct sockaddr * find_route(u_long dest)
 {
 	int i;
-	int cookie = 0;
+	int cookie = -1;
     struct net_rdb *pdb;
     struct conversation_context *pcc;
 

@@ -839,6 +839,8 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 	return 0;
 }
 
+int rx_sum_drop = 0;
+
 ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 {
 	struct tcpuphdr *up;
@@ -856,6 +858,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 	u_short cksum = tcp_checksum(0, packet, len);
 	if (cksum != 0 && up->th_ckpass) {
 		log_error("invalid packet checksum: %x %x len=%d\n", cksum, up->th_ckpass, len);
+		rx_sum_drop++;
 		return 0;
 	}
 

@@ -206,6 +206,7 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjus
 	return 0;
 }
 
+extern int rx_sum_drop;
 extern struct low_link_ops udp_ops;
 extern struct low_link_ops icmp_ops;
 
@@ -447,6 +448,7 @@ int main(int argc, char *argv[])
 						close(netfd);
 						netfd = newfd;
 						bind_to_device(netfd, iface);
+						if (rx_sum_drop > 5) { rx_sum_drop = 0; so_addr.sin_port = 0; }
 						if (bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
 							setblockopt(netfd, 0);
 							nready = _reload = 0;
@@ -482,12 +484,14 @@ int main(int argc, char *argv[])
 				len = tcpup_frag_input(packet, len, 1500);
 				if (len <= 0 && have_target == 2) ll_addr = tmp_addr;
 				ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
-				if (ignore == -1) _reload = 2;
+				if (ignore == -1 || rx_sum_drop > 10) _reload = 2;
 				LOG_VERBOSE("send_data: %d\n", ignore);
+
 			}
 
 			packet = get_tcpip_data(&len);
 			if (packet != NULL) {
+				if (len > 0) rx_sum_drop = 0;
 				len = tun_write(tunfd, packet, len);
 				LOG_VERBOSE("tun_write: %d\n", len);
 				push_conversation(SOT(&tmp_addr), tmp_alen);
