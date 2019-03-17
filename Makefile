@@ -19,7 +19,7 @@ endif
 
 toyclient: dnsproto.o jni/nameresolv.o jni/firewall.o
 
-toyclient: conntrack.o conntcpup.o socksify.o tcpuputils.o conndgram.o portpool.o udp_link.o icmp_link.o base_link.o jni/router.o tx_debug.o conversation.o main.o win32stub.o
+toyclient: conntrack.o conntcpup.o socksify.o tcpuputils.o conndgram.o portpool.o udp_link.o icmp_link.o base_link.o jni/router.o tx_debug.o conversation.o main.o win32stub.o natimpl.o
 	$(CC) -o $@ $(LDFLAGS) $^ $(LDLIBS)
 
 socksify.o: socksify_$(BIN_FMT_TARGET).c

@@ -10,6 +10,7 @@
 
 #include "tx_debug.h"
 #include "portpool.h"
+#include "natimpl.h"
 #include "conversation.h"
 
 typedef unsigned char uint8_t;
@@ -460,7 +461,8 @@ static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *
 	if (conn->use_port) {
 		up->uh_tag  = TAG_DST_IPV4;
 		up->uh_dport = uh->uh_dport;
-		memcpy(up->uh_daddr, &ip->ip_dst, 4);
+		// memcpy(up->uh_daddr, &ip->ip_dst, 4);
+		nat_map(up->uh_daddr, &ip->ip_dst);
 	} else {
 		up->uh_tag  = TAG_SRC_IPV4;
 		up->uh_dport = uh->uh_sport;
@@ -551,6 +553,7 @@ static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 				assert(optlen >= 8 && optp[1] == 8);
 				memcpy(&conn->c.th_dport, optp + 2, sizeof(conn->c.th_dport));
 				memcpy(&conn->c.ip_dst, optp + 4, sizeof(conn->c.ip_dst));
+				nat_map(&conn->c.ip_dst, optp + 4);
 				is_ipv4 = 1;
 				break;
 

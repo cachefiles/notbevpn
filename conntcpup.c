@@ -10,6 +10,7 @@
 #include <bsdinet/tcpup.h>
 
 #include "tx_debug.h"
+#include "natimpl.h"
 #include "portpool.h"
 #include "conversation.h"
 
@@ -318,7 +319,10 @@ static size_t ipv4_hdr_setbuf(void *buf, int proto, size_t total, tcp_state_t *s
 
 static size_t ipv4_set_relay(void *buf, tcp_state_t *st)
 {
-	return set_relay_info(buf, RELAY_IPV4, &st->ip_dst, st->th_dport);
+	struct in_addr map_dest = {};
+
+	nat_map(&map_dest, &st->ip_dst);
+	return set_relay_info(buf, RELAY_IPV4, &map_dest, st->th_dport);
 }
 
 static nat_conntrack_ops ip_conntrack_ops = {

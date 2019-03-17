@@ -12,6 +12,9 @@
 #include <bsdinet/tcpup.h>
 
 #include "dnsproto.h"
+#include "natimpl.h"
+#include "portpool.h"
+#define is_black(x) (1)
 
 #ifndef WIN32
 #include <sys/wait.h>
@@ -27,6 +30,7 @@ typedef struct udphdr nat_udphdr_t;
 typedef struct ip6_hdr nat_ip6hdr_t;
 
 static char SUFFIXES[128] = ".p.yrli.bid";
+static port_pool_t _nat_pool = {};
 #define __unmap_code(x) __map_code(x)
 
 int __map_code(int c)
@@ -169,6 +173,8 @@ int is_tethering_dns(struct in_addr serv)
 }
 #endif
 
+
+
 int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from, int tethering)
 {
 	int i;
@@ -187,8 +193,12 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 	for (i = 0; i < parser.head.question; i++) {
 		que = &parser.question[i];
 
-		encrypt_domain(crypt, que->domain);
-		que->domain = add_domain(&parser, crypt);
+#if 0
+		if (is_black(que->domain)) {
+			encrypt_domain(crypt, que->domain);
+			que->domain = add_domain(&parser, crypt);
+		}
+#endif
 	}
 
 	len = dns_build(&parser, (uint8_t *)sndbuf, sizeof(sndbuf));
@@ -375,10 +385,12 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 		strcpy(name, que->domain);
 		decrypt_domain(name);
 
+#if 0
 		if (strcasestr(name, "yrli.bid")) {
 			LOG_DEBUG("domain is %s", name);
 			have_suffixes = 1;
 		}
+#endif
 
 		crypt = que->domain;
 		que->domain = plain = add_domain(&parser, name);
@@ -390,7 +402,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 	int nanswer = 0;
 	for (i = 0; i < parser.head.answer; i++) {
 		res = &parser.answer[i];
-		struct dns_cname *ptr = res->value;
+		struct dns_cname *ptr = (struct dns_cname *)res->value;
 
 		LOG_VERBOSE("an %d: %s T%d\n", i, res->domain, res->type);
 		if (strcasecmp(res->domain, crypt) == 0) {
@@ -408,16 +420,31 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 			res->domain = plain;
 		}
 
-		if (res->type == NSTYPE_A && have_suffixes == 0) {
-			add_dns_route(res->value);
+		if (res->type == NSTYPE_A /* && have_suffixes == 0 */ ) {
+			// add_dns_route(res->value);
+
+			uint16_t ipnat = 0;
+			uint32_t ipnatfull = 0;
+			uint32_t ipresolv = *(uint32_t*)res->value;
+
+			if (nat_map(res->value, &ipresolv)) { 
+				ipnat = alloc_nat_port(&_nat_pool);
+				ipnatfull = htonl(ipnat) | inet_addr("10.10.0.0");
+				nat_create(ipresolv, ipnatfull);
+				use_nat_port(&_nat_pool, ipnat);
+				*(uint32_t *)res->value = ipnatfull;
+			}
 		}
 
 		if (nanswer++ < i)
 			parser.answer[nanswer - 1] = *res;
 
+#if 0
 		if (res->type == NSTYPE_A && have_suffixes == 1) {
 			add_dns_route(res->value);
+			res->value = 
 		}
+#endif
 	}
 	parser.head.answer = nanswer;
 
