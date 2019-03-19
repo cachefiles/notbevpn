@@ -141,7 +141,35 @@ typedef struct _nat_conntrack_ops {
 	nat_conntrack_t * (*newconn)(uint8_t *packet, uint16_t sport, uint16_t dport);
 } nat_conntrack_ops;
 
+#define HASH_MASK 65535
+
+static inline unsigned int ipv4_get_connection_match_hash(const void *src, const void *dst, uint16_t sport, uint16_t dport)
+{
+	uint32_t hash;
+	uint32_t *srcp = (uint32_t *)src;
+	uint32_t *dstp = (uint32_t *)dst;
+
+	hash = *srcp ^ *dstp ^ sport ^ dport;
+	return ((hash >> 16)^ hash) & HASH_MASK;
+}
+
+static inline unsigned int ipv6_get_connection_match_hash(const void *src, const void *dst, uint16_t sport, uint16_t dport)
+{
+	int i;
+	uint32_t hash = 0;
+	uint32_t *srcp = (uint32_t *)src;
+	uint32_t *dstp = (uint32_t *)dst;
+
+	for (i = 0; i < 4; i++) {
+		hash ^= *srcp++ ^ *dstp++;
+	}
+
+	hash = hash ^ sport ^ dport;
+	return ((hash >> 16)^ hash) & HASH_MASK;
+}
+
 static time_t _ipv4_gc_time = 0;
+static nat_conntrack_t *_ipv4_last[HASH_MASK + 1] = {};
 LIST_HEAD(nat_conntrack_q, _nat_conntrack_t) _ipv4_header = LIST_HEAD_INITIALIZER(_ipv4_header);
 
 static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t dport)
@@ -150,6 +178,25 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 	nat_conntrack_t *item;
 
 	ip = (nat_iphdr_t *)packet;
+
+	int hash_idx = ipv4_get_connection_match_hash(&ip->ip_src, &ip->ip_dst, sport, dport);
+
+	item = _ipv4_last[hash_idx];
+	if (item != NULL) {
+		if (item->c.th_sport != sport ||
+				item->c.th_dport != dport) {
+			goto next;
+		}
+
+		if (item->c.ip_src.s_addr == ip->ip_src.s_addr &&
+				item->c.ip_dst.s_addr == ip->ip_dst.s_addr) {
+			item->last_alive = time(NULL);
+			item->last_sent = time(NULL);
+			return item;
+		}
+next:;
+	}
+
 	LIST_FOREACH(item, &_ipv4_header, entry) {
 		if (item->c.th_sport != sport ||
 				item->c.th_dport != dport) {
@@ -160,6 +207,7 @@ static nat_conntrack_t * lookup_ipv4(uint8_t *packet, uint16_t sport, uint16_t d
 				item->c.ip_dst.s_addr == ip->ip_dst.s_addr) {
 			item->last_alive = time(NULL);
 			item->last_sent = time(NULL);
+			_ipv4_last[hash_idx] = item;
 			return item;
 		}
 	}
@@ -228,6 +276,16 @@ static int conngc_ipv4(int type, time_t now, nat_conntrack_t *skip)
 						item, _tcp_pool._nat_count, now - item->last_alive,
 						P(&c->ip_src), htons(c->th_sport), P(&c->ip_dst), htons(c->th_dport), item->s.flags, item->c.flags);
 				if (item->use_port) free_nat_port(&_tcp_pool, item->s.th_dport);
+
+				int hash_idx = ipv4_get_connection_match_hash(
+						&item->c.ip_src, &item->c.ip_dst, item->c.th_sport, item->c.th_dport);
+				if (item == _ipv4_last[hash_idx]) _ipv4_last[hash_idx] = NULL;
+
+				hash_idx = item->s.ip_src.s_addr;
+				hash_idx = (hash_idx >> 16) ^ hash_idx;
+				hash_idx = (hash_idx & HASH_MASK);
+				if (item == _ipv4_last[hash_idx]) _ipv4_last[hash_idx] = NULL;
+
 				LIST_REMOVE(item, entry);
 				free(item);
 			}
@@ -334,6 +392,7 @@ static nat_conntrack_ops ip_conntrack_ops = {
 };
 
 static time_t _ipv6_gc_time = 0;
+static nat_conntrack_t * _ipv6_last[HASH_MASK] = {};
 struct nat_conntrack_q _ipv6_header = LIST_HEAD_INITIALIZER(_ipv6_header);
 
 static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t dport)
@@ -342,6 +401,25 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 	nat_conntrack_t *item;
 
 	ip = (nat_ip6hdr_t *)packet;
+
+	int hash_idx = ipv6_get_connection_match_hash(&ip->ip6_src, &ip->ip6_dst, sport, dport);
+
+	item = _ipv6_last[hash_idx];
+	if (item != NULL) {
+		if (item->c.th_sport != sport ||
+				item->c.th_dport != dport) {
+			goto next;
+		}
+
+		if (0 == memcmp(&item->c.ip6_src, &ip->ip6_src, sizeof(ip->ip6_src)) &&
+				0 == memcmp(&item->c.ip6_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
+			item->last_alive = time(NULL);
+			item->last_sent  = time(NULL);
+			return item;
+		}
+next:;
+	}
+
 	LIST_FOREACH(item, &_ipv6_header, entry) {
 		if (item->c.th_sport != sport ||
 				item->c.th_dport != dport) {
@@ -352,6 +430,7 @@ static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t d
 				0 == memcmp(&item->c.ip6_dst, &ip->ip6_dst, sizeof(ip->ip6_dst))) {
 			item->last_alive = time(NULL);
 			item->last_sent  = time(NULL);
+			_ipv6_last[hash_idx] = item;
 			return item;
 		}
 	}
@@ -383,6 +462,16 @@ static int conngc_ipv6(int type, time_t now, nat_conntrack_t *skip)
 				log_verbose("free dead connection: %p %d F: %ld T: %ld\n", item, _tcp_pool._nat_count, now, item->last_alive);
 				log_verbose("connection: cflags %x sflags %x fin %x rst %x\n", item->c.flags, item->s.flags, TH_FIN, TH_RST);
 				if (item->use_port) free_nat_port(&_tcp_pool, item->s.th_dport);
+
+				int hash_idx = ipv6_get_connection_match_hash(
+						&item->c.ip6_src, &item->c.ip6_dst, item->c.th_sport, item->c.th_dport);
+				if (item == _ipv6_last[hash_idx]) _ipv6_last[hash_idx] = NULL;
+
+				hash_idx = item->s.ip_src.s_addr;
+				hash_idx = (hash_idx >> 16) ^ hash_idx;
+				hash_idx = (hash_idx & HASH_MASK);
+				if (item == _ipv6_last[hash_idx]) _ipv6_last[hash_idx] = NULL;
+
 				LIST_REMOVE(item, entry);
 				free(item);
 			}
@@ -872,6 +961,27 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 		return 0;
 	}
 
+	int hash_idx = up->th_conv;
+
+	hash_idx = (hash_idx >> 16) ^ hash_idx;
+	hash_idx = (hash_idx & HASH_MASK);
+
+	item = _ipv4_last[hash_idx];
+	if (item != NULL && item->s.ip_src.s_addr == up->th_conv) {
+		item->last_alive = time(NULL);
+		item->last_recv  = item->last_alive;
+		conn = item;
+		goto found;
+	}
+
+	item = _ipv6_last[hash_idx];
+	if (item != NULL && item->s.ip_src.s_addr == up->th_conv) {
+		item->last_alive = time(NULL);
+		item->last_recv  = item->last_alive;
+		conn = item;
+		goto found;
+	}
+
 	LIST_FOREACH(item, &_ipv4_header, entry) {
 		if (item->s.ip_src.s_addr != up->th_conv) {
 			continue;
@@ -879,6 +989,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 
 		item->last_alive = time(NULL);
 		item->last_recv  = item->last_alive;
+		_ipv4_last[hash_idx] = item;
 		conn = item;
 		goto found;
 	}
@@ -890,6 +1001,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 
 		item->last_alive = time(NULL);
 		item->last_recv  = item->last_alive;
+		_ipv6_last[hash_idx] = item;
 		conn = item;
 		goto found;
 	}
