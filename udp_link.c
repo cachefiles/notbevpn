@@ -14,9 +14,7 @@ static int _ack_count = 0;
 static time_t _ack_start_time = 0;
 
 static unsigned char TUNNEL_PADDIND_DNS[] = {
-	0x20, 0x88, 0x81, 0x80, 0x00, 0x01, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x04, 0x77, 0x77, 0x77,
-	0x77, 0x00, 0x00, 0x01, 0x00, 0x01
+        '.', 'K', 'L', 'O', 'I', 'M', 'H', 'V'
 };
 
 #define LEN_PADDING_DNS sizeof(TUNNEL_PADDIND_DNS)
@@ -51,13 +49,14 @@ static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct socka
 
 	packet = _plain_stream;
 
-	if (count <= sizeof(TUNNEL_PADDIND_DNS)) return -1;
-	count -= sizeof(TUNNEL_PADDIND_DNS);
+
+	if (count <= LEN_PADDING_DNS) return -1;
+	count -= LEN_PADDING_DNS;
 
 	LOG_VERBOSE("recv: %ld\n", count + LEN_PADDING_DNS);
 	memcpy(&key, &packet[14], sizeof(key));
 	count = MIN(count, len);
-	packet_decrypt(htons(key), buf, packet + sizeof(TUNNEL_PADDIND_DNS), count);
+	packet_decrypt(htons(key), buf, packet + LEN_PADDING_DNS, count);
 
 	_ack_start_time = 0;
 	_ack_count = 0;
@@ -70,22 +69,22 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 	unsigned short key = rand();
 	uint8_t _crypt_stream[MAX_PACKET_SIZE];
 
-	assert (len + sizeof(TUNNEL_PADDIND_DNS) < sizeof(_crypt_stream));
-	memcpy(_crypt_stream, TUNNEL_PADDIND_DNS, sizeof(TUNNEL_PADDIND_DNS));
-	memcpy(_crypt_stream + 14, &key, 2);
-	packet_encrypt(htons(key), _crypt_stream + sizeof(TUNNEL_PADDIND_DNS), buf, len);
+	assert (len + LEN_PADDING_DNS < sizeof(_crypt_stream));
+	memcpy(_crypt_stream, TUNNEL_PADDIND_DNS, LEN_PADDING_DNS);
+	// memcpy(_crypt_stream + 14, &key, 2);
+	packet_encrypt(htons(key), _crypt_stream + LEN_PADDING_DNS, buf, len);
 
 	if (get_ack_type() != ACK_TYPE_NONE) {
 		if (++_ack_count < 11) {
 			_ack_start_time = time(NULL);
 		} else if (_ack_start_time + 2 < time(NULL)) {
-			sendto(devfd, _crypt_stream, len + sizeof(TUNNEL_PADDIND_DNS), 0, ll_addr, ll_len);
+			sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, ll_len);
 			return -1;
 		}
 	}
 
 	protect_reset(IPPROTO_UDP, _crypt_stream, len, ll_addr, ll_len);
-	return sendto(devfd, _crypt_stream, len + sizeof(TUNNEL_PADDIND_DNS), 0, ll_addr, ll_len);
+	return sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, ll_len);
 }
 
 static int udp_low_link_adjust(void)
