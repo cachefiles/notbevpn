@@ -88,7 +88,7 @@ static int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struc
 	hdr->checksum = ip_checksum(_crypt_stream, len + sizeof(*hdr));
 
 	protect_reset(IPPROTO_ICMP, _crypt_stream, len, ll_addr, ll_len);
-	return sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, ll_addr, ll_len);
+	return sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in)));
 }
 
 static int icmp_low_link_create(void)

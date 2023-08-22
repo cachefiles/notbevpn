@@ -209,6 +209,7 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjus
 extern int rx_sum_drop;
 extern struct low_link_ops udp_ops;
 extern struct low_link_ops icmp_ops;
+extern struct low_link_ops udp6_ops;
 
 ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit);
 void tcp_nat_init(struct sockaddr_in *ifaddr, struct sockaddr_in *target);
@@ -350,6 +351,8 @@ int main(int argc, char *argv[])
 		return run_tun2socks(tunfd, &so_addr, &ll_addr);
 	} else if (0 == strcmp(proto, "udp")) {
 		link_ops = &udp_ops;
+	} else if (0 == strcmp(proto, "udp6")) {
+		link_ops = &udp6_ops;
 	} else if (0 == strcmp(proto, "icmp")) {
 		link_ops = &icmp_ops;
 	} else {

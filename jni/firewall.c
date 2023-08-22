@@ -325,7 +325,7 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 				dst_ns = ip->ip_dst.s_addr ^ htonl(1);
 				nswrap = (ip->ip_dst.s_addr == htonl(0x8080404) || dst_ns == ip->ip_src.s_addr);
 #ifdef __ANDROID__
-				istether = is_tethering_dns(ip->ip_dst);
+				istether = 0; // is_tethering_dns(ip->ip_dst);
 #endif
 				set_ack_type(ACK_TYPE_NEED);
 				if ((nswrap || istether) &&
