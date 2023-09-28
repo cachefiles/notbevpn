@@ -119,6 +119,10 @@ static int cksum_delta(void *ptr, size_t len)
 	return acc;
 }
 
+#if 0
+if (0xffff ^ cksum) *ipchecksum = update_check_sum(*ipchecksum + (0xffff^cksum), 0, 0);
+#endif
+
 static uint16_t update_cksum(uint16_t old, int delta)
 {
 	int acc;

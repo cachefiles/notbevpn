@@ -22,8 +22,8 @@
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
-int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t *limited);
-int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *pfailure);
+int check_blocked_silent(int tunfd, /* int dnsfd,*/ char *packet, size_t len, time_t *limited);
+int check_blocked_normal(int tunfd, /* int dnsfd, */ char *packet, size_t len, int *pfailure);
 int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
 
 char * get_tcpup_data(int *len, u_long *dest);
@@ -36,7 +36,9 @@ static int last_track_count = 0;
 static int last_track_enable = 0;
 static time_t last_track_time = 0;
 
+#if 0
 static int _dns_fd = -1;
+#endif
 static int _lostlink = 0;
 static int _linkfailure = 0;
 static int _disconnected = 0;
@@ -78,19 +80,19 @@ static int is_blocked(int tunfd, char *packet, size_t len, int *failure)
 	time_t time_current = 0;
 
 	if (_off_powersave) {
-		return check_blocked_silent(tunfd, _dns_fd, packet, len, &_time_powersave);
+		return check_blocked_silent(tunfd, /* _dns_fd, */ packet, len, &_time_powersave);
 	} else if (!_is_powersave) {
-		return check_blocked_normal(tunfd, _dns_fd, packet, len, failure);
+		return check_blocked_normal(tunfd, /* _dns_fd, */ packet, len, failure);
 	}
 
 	time(&time_current);
 	_off_powersave = (_time_powersave > time_current) || (_time_powersave + 30 < time_current);
-	check_blocked_silent(-1, _dns_fd, packet, len, &_time_powersave);
+	check_blocked_silent(-1, /*_dns_fd,*/ packet, len, &_time_powersave);
 
 	return 0;
 }
 
-static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *link_ops)
+static int vpn_run_loop(int tunfd, int netfd, /* int dnsfd, */ struct low_link_ops *link_ops)
 {
 	int len;
 	int maxfd;
@@ -124,9 +126,13 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 			FD_ZERO(&readfds);
 			FD_SET(tunfd, &readfds);
 			FD_SET(netfd, &readfds);
+#if 0
 			FD_SET(dnsfd, &readfds);
+#endif
 			maxfd = MAX(tunfd, netfd);
+#if 0
 			maxfd = MAX(maxfd, dnsfd);
+#endif
 
 			timeo.tv_sec  = 1;
 			timeo.tv_usec = 0;
@@ -231,6 +237,7 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 			}
 		}
 
+#if 0
 		packet = (buf + 60);
 		if (FD_ISSET(dnsfd, &readfds)) {
 			int bufsize = 1500;
@@ -250,6 +257,7 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 				len = tun_write(tunfd, packet, len);
 			}
 		}
+#endif
 
 		assert(test > 0);
 	}
@@ -393,9 +401,13 @@ static int vpn_jni_free(JNIEnv *env, jclass clazz, jint which)
 {
 	_link_ops[which] = NULL;
 	close(_link_fd);
+#if 0
 	close(_dns_fd);
+#endif
 	_link_fd = -1;
+#if 0
 	_dns_fd = -1;
+#endif
 	return 0;
 }
 
@@ -507,7 +519,9 @@ static int vpn_jni_get_pendingfds(JNIEnv *env, jclass clazz, jint which, jintArr
 static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 {
 	int link_failure;
+#if 0
 	int dnsfd = _dns_fd;
+#endif
 	int netfd = _link_fd;
 	struct low_link_ops *link_ops = _link_ops[which];
 
@@ -518,11 +532,13 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		add_pending_fd(netfd);
 		_link_fd = netfd;
 
+#if 0
 		dnsfd = udp_ops.create();
 		assert (dnsfd != -1);
 		bind_any_address(dnsfd);
 		add_pending_fd(dnsfd);
 		_dns_fd = dnsfd;
+#endif
 	}
 
 	if (_alength > 0) {
@@ -530,10 +546,10 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 	}
 
 	_linkfailure = 0;
-	link_failure = vpn_run_loop(tunfd, netfd, dnsfd, link_ops);
+	link_failure = vpn_run_loop(tunfd, netfd, /* dnsfd,*/ link_ops);
 	if (link_failure == -1
 			&& _disconnected == 0) {
-		close(dnsfd);
+		// close(dnsfd);
 		close(netfd);
 		netfd = link_ops->create();
 		assert (netfd != -1);
@@ -541,11 +557,13 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		add_pending_fd(netfd);
 		_link_fd = netfd;
 
+#if 0
 		dnsfd = udp_ops.create();
 		assert (dnsfd != -1);
 		bind_any_address(dnsfd);
 		add_pending_fd(dnsfd);
 		_dns_fd = dnsfd;
+#endif
 	}
 
 	if (_alength > 0) {

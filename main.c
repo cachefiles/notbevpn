@@ -30,7 +30,7 @@ int tun_write(int fd, void *buf, size_t len);
 
 ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit);
 ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit);
-int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure);
+int check_blocked_normal(int tunfd, /* int dnsfd, */ char *packet, size_t len, int *failure);
 int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
 
 int set_linkfailure()
@@ -286,7 +286,7 @@ int main(int argc, char *argv[])
 	const char *tun_name = DEFAULT_TUN_NAME;
 	char buf[MAX_PACKET_SIZE];
 
-	int netfd, dnsfd, error, have_target = 0;
+	int netfd, /* dnsfd, */ error, have_target = 0;
 	struct sockaddr_in ll_addr = {};
 	struct sockaddr_in so_addr = {};
 	struct sockaddr_in tmp_addr = {};
@@ -376,8 +376,10 @@ int main(int argc, char *argv[])
 	netfd = (*link_ops->create)();
 	assert(netfd != -1);
 
+#if 0
 	dnsfd = (*udp_ops.create)();
 	assert(dnsfd != -1);
+#endif
 
 	setreuid(save_uid, save_uid);
 	bind_to_device(netfd, iface);
@@ -394,7 +396,7 @@ int main(int argc, char *argv[])
 
 	setblockopt(netfd, 0);
 	setblockopt(tunfd, 0);
-	setblockopt(dnsfd, 0);
+	// setblockopt(dnsfd, 0);
 
 	int nready = 0;
 	fd_set readfds;
@@ -422,16 +424,16 @@ int main(int argc, char *argv[])
 			FD_ZERO(&readfds);
 			FD_SET(tunfd, &readfds);
 			FD_SET(netfd, &readfds);
-			FD_SET(dnsfd, &readfds);
+			// FD_SET(dnsfd, &readfds);
 			maxfd = MAX(tunfd, netfd);
-			maxfd = MAX(maxfd, dnsfd);
+			// maxfd = MAX(maxfd, dnsfd);
 
 			timeo.tv_sec  = 1;
 			timeo.tv_usec = 0;
 
 			bug_check++;
 			busy_loop = 0;
-			nready = select_call(maxfd, netfd, dnsfd, &readfds, &timeo);
+			nready = select_call(maxfd, netfd, /* dnsfd, */ &readfds, &timeo);
 			if (nready == -1) {
 				LOG_DEBUG("select failure");
 				if (errno == EINTR) continue;
@@ -515,7 +517,7 @@ int main(int argc, char *argv[])
 			}
 
 			int ignore = 0;
-			if (check_blocked_normal(tunfd, dnsfd, packet, len, &ignore)) {
+			if (check_blocked_normal(tunfd, /* dnsfd, */ packet, len, &ignore)) {
 				LOG_VERBOSE("ignore blocked data\n");
 				continue;
 			}
@@ -537,6 +539,7 @@ int main(int argc, char *argv[])
 			}
 		}
 
+#if 0
 		if (FD_ISSET(dnsfd, &readfds)) {
 			int bufsize = 1500;
 			packet = (buf + 60);
@@ -556,13 +559,14 @@ int main(int argc, char *argv[])
 				len = tun_write(tunfd, packet, len);
 			}
 		}
+#endif
 
 		assert(bug_check > 0);
 	}
 
 clean:
 	close(netfd);
-	close(dnsfd);
+	// close(dnsfd);
 	vpn_tun_free(tunfd);
 
 	LOG_VERBOSE("exit");
