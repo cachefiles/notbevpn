@@ -32,12 +32,7 @@ static char SUFFIXES[128] = ".pac.yrli.bid";
 static port_pool_t _nat_pool = {};
 #define __unmap_code(x) __map_code(x)
 
-static int is_black(const char *domain)
-{
-    return strcmp(domain, "mtalk.google.com") == 0;
-}
-
-int __map_code(int c)
+static int __map_code(int c)
 {
     int cc = (c & 0xFF);
 
@@ -52,7 +47,7 @@ int __map_code(int c)
     return cc;
 }
 
-static void encrypt_domain(char *dst, const char *src)
+static void domain_rewrap(char *dst, const char *src)
 {
     char *d = dst;
     const char *s = src;
@@ -66,7 +61,7 @@ static void encrypt_domain(char *dst, const char *src)
     return;
 }
 
-static char * decrypt_domain(char *name)
+static char * domain_unwrap(char *name)
 {
 	int l;
     char *n = name;
@@ -133,53 +128,6 @@ static struct sockaddr_in * resolv_fetch(int ident, struct sockaddr_in *from)
 	return 0;
 }
 
-#if 0
-#ifdef __ANDROID__
-static int get_dns_addr(struct sockaddr_in *dest, int tethering)
-{
-	char dns[97];
-
-	if (tethering) {
-		return 0;
-	}
-
-	__system_property_get("net.dns1", dns);
-	if (*dns && strchr(dns, ':') == NULL) {
-		dest->sin_addr.s_addr = inet_addr(dns);
-		return 1;
-	}
-
-	__system_property_get("net.dns2", dns);
-	if (*dns && strchr(dns, ':') == NULL) {
-		dest->sin_addr.s_addr = inet_addr(dns);
-		return 1;
-	}
-
-	return 0;
-}
-
-int is_tethering_dns(struct in_addr serv)
-{
-	char dns[97];
-
-	__system_property_get("net.dns1", dns);
-	if (*dns && strchr(dns, ':') == NULL &&
-			serv.s_addr == inet_addr(dns)) {
-		return 1;
-	}
-
-	__system_property_get("net.dns2", dns);
-	if (*dns && strchr(dns, ':') == NULL &&
-			serv.s_addr == inet_addr(dns)) {
-		return 1;
-	}
-
-	return 0;
-}
-#endif
-#endif
-
-
 
 int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from, int tethering)
 {
@@ -199,10 +147,8 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 	for (i = 0; i < parser.head.question; i++) {
 		que = &parser.question[i];
 
-		if (is_black(que->domain)) {
-			encrypt_domain(crypt, que->domain);
-			que->domain = add_domain(&parser, crypt);
-		}
+		domain_rewrap(crypt, que->domain);
+		que->domain = add_domain(&parser, crypt);
 	}
 
 	len = dns_build(&parser, (uint8_t *)sndbuf, sizeof(sndbuf));
@@ -213,12 +159,13 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 	int flags = 0;
 	struct sockaddr_in _save_addr = *dest;
 
-#if 0
 #ifdef __ANDROID__
-	flags = get_dns_addr(dest, tethering);
+	_save_addr = *dest;
+	// flags = get_dns_addr(dest, tethering);
+	dest->sin_addr.s_addr = inet_addr("114.114.114.114");
 #else
 	_save_addr = *dest;
-	dest->sin_addr.s_addr = inet_addr("10.143.22.118");
+	dest->sin_addr.s_addr = inet_addr("114.114.114.114");
 	flags = 1;
 
 	static int dns_override = 0;
@@ -242,7 +189,6 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 #endif
 		*dest = _relay;
 	}
-#endif
 #endif
 
 	resolv_record(parser.head.ident, from, &_save_addr, flags);
@@ -389,14 +335,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 		que = &parser.question[i];
 
 		strcpy(name, que->domain);
-		decrypt_domain(name);
-
-#if 0
-		if (strcasestr(name, "yrli.bid")) {
-			LOG_DEBUG("domain is %s", name);
-			have_suffixes = 1;
-		}
-#endif
+		domain_unwrap(name);
 
 		crypt = que->domain;
 		que->domain = plain = add_domain(&parser, name);
@@ -415,7 +354,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 			res->domain = parser.question[0].domain;
 		}
 
-		if (res->type == NSTYPE_CNAME) {
+		if (res->type == NSTYPE_CNAME && strstr(ptr->alias, "yrli.bid") == NULL) {
 			have_suffixes = 1;
 			if (strcasecmp(plain, ptr->alias) == 0) {
 				continue;
@@ -426,7 +365,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 			res->domain = plain;
 		}
 
-		if (res->type == NSTYPE_A /* && have_suffixes == 0 */ ) {
+		if (res->type == NSTYPE_A && have_suffixes == 0) {
 			// add_dns_route(res->value);
 
 			uint16_t ipnat = 0;

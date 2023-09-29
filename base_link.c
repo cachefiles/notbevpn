@@ -19,13 +19,19 @@ int set_ack_type(int type)
 
 int packet_decrypt(unsigned short key, void *dst, const void *src, size_t len)
 {
-	memmove(dst, src, len);
+	// memmove(dst, src, len);
+	uint8_t * fdst = dst, * fsrc = src;
+
+	for (int i = 0; i < len; i++) fdst[i] = fsrc[i] ^ 0x0f;
 	return 0;
 }
 
 int packet_encrypt(unsigned short key, void *dst, const void *src, size_t len)
 {
-	memmove(dst, src, len);
+	// memmove(dst, src, len);
+	uint8_t * fdst = dst, * fsrc = src;
+
+	for (int i = 0; i < len; i++) fdst[i] = fsrc[i] ^ 0x0f;
 	return 0;
 }
 

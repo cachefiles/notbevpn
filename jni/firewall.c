@@ -320,6 +320,25 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 	if (ip->ip_p == IPPROTO_UDP) {
 		uh = (nat_udphdr_t *)(ip + 1);
 
+		switch(htons(uh->uh_sport)) {
+			case 8053:
+				/* match: 10.2.0.1:8053 -> 1.0.0.1:xxxx */
+				if (ip->ip_src.s_addr == htonl(0xa020001) && ip->ip_dst.s_addr == htonl(0x01000001) ) {
+					/* do nat to: 1.0.0.1:53 -> 10.2.0.1:xxxx */
+					u_long swpval = ip->ip_src.s_addr;
+					ip->ip_src.s_addr = ip->ip_dst.s_addr;
+					ip->ip_dst.s_addr = swpval;
+
+					uh->uh_sport = htons(53);
+
+					swpval = uh->uh_sum + htons(8053 - 53);
+					uh->uh_sum = (swpval & 0xffff) + (swpval >> 16);
+					LOG_DEBUG("back to return");
+					tun_write(tunfd, packet, len);
+					return 1;
+				}
+		}
+
 		switch(htons(uh->uh_dport)) {
 			case 53:
 				dst_ns = ip->ip_dst.s_addr ^ htonl(1);
@@ -344,6 +363,22 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 						}
 					}
 					(*failure_try)++;
+					return 1;
+				}
+
+				/* match: 10.2.0.1:xxxx -> 1.0.0.1:53 */
+				if (ip->ip_src.s_addr == htonl(0xa020001) && ip->ip_dst.s_addr == htonl(0x01000001) ) {
+					/* do nat to: 1.0.0.1:xxxx -> 10.2.0.1:8053 */
+					u_long swpval = ip->ip_src.s_addr;
+					ip->ip_src.s_addr = ip->ip_dst.s_addr;
+					ip->ip_dst.s_addr = swpval;
+
+					uh->uh_dport = htons(8053);
+
+					swpval = uh->uh_sum + htons(0xffff + 53 - 8053);
+					uh->uh_sum = (swpval & 0xffff) + (swpval >> 16);
+					LOG_DEBUG("forward to return");
+					tun_write(tunfd, packet, len);
 					return 1;
 				}
 
