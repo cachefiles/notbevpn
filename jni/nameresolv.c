@@ -85,14 +85,14 @@ static char * domain_unwrap(char *name)
 struct resolv_t {
 	int flags;
 	uint16_t ident;
-	struct sockaddr_in from;
-	struct sockaddr_in dest;
+	struct sockaddr_in6 from;
+	struct sockaddr_in6 dest;
 };
 
 static int _wheel = 0;
 struct resolv_t _pending_resolv[512];
 
-static int resolv_record(int ident, struct sockaddr_in *from, struct sockaddr_in *dest, int flags)
+static int resolv_record(int ident, struct sockaddr_in6 *from, struct sockaddr_in6 *dest, int flags)
 {
 	int i;
 	int wheel = _wheel;
@@ -113,7 +113,7 @@ static int resolv_record(int ident, struct sockaddr_in *from, struct sockaddr_in
 	return 0;
 }
 
-static struct sockaddr_in * resolv_fetch(int ident, struct sockaddr_in *from)
+static struct sockaddr_in6 * resolv_fetch(int ident, struct sockaddr_in6 *from)
 {
 	int i;
 
@@ -129,7 +129,7 @@ static struct sockaddr_in * resolv_fetch(int ident, struct sockaddr_in *from)
 }
 
 
-int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from, int tethering)
+int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest, struct sockaddr_in6 *from, int tethering)
 {
 	int i;
 	int error;
@@ -157,31 +157,32 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 	}
 
 	int flags = 0;
-	struct sockaddr_in _save_addr = *dest;
+	struct sockaddr_in6 _save_addr = *dest;
 
 #ifdef __ANDROID__
 	_save_addr = *dest;
 	// flags = get_dns_addr(dest, tethering);
-	dest->sin_addr.s_addr = inet_addr("114.114.114.114");
+	inet_pton(AF_INET6, &dest->sin6_addr, "::ffff:114.114.114.114");
+	flags = 1;
 #else
 	_save_addr = *dest;
-	dest->sin_addr.s_addr = inet_addr("114.114.114.114");
+	inet_pton(AF_INET6, &dest->sin6_addr, "::ffff:114.114.114.114");
 	flags = 1;
 
 	static int dns_override = 0;
-	static struct sockaddr_in _relay = {};
+	static struct sockaddr_in6 _relay = {};
 	if (dns_override || getenv("DNSRELAY")) {
 		char *ptr, _dummy[512];
 		if (dns_override == 0) {
 			strcpy(_dummy, getenv("DNSRELAY"));
-			_relay.sin_family = AF_INET;
-			_relay.sin_port   = htons(53);
+			_relay.sin6_family = AF_INET6;
+			_relay.sin6_port   = htons(53);
 			ptr = strchr(_dummy, ':');
 			if (ptr != NULL) {
 				*ptr++= 0;
-				_relay.sin_port = htons(atoi(ptr));
+				_relay.sin6_port = htons(atoi(ptr));
 			}
-			_relay.sin_addr.s_addr = inet_addr(_dummy);
+			inet_pton(AF_INET6, &_relay.sin6_addr, _dummy);
 			dns_override = 1;
 		}
 #ifdef SO_BINDTODEVICE
@@ -196,7 +197,7 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest,
 	return error;
 }
 
-static int ip4_mktpl(nat_iphdr_t *ip, struct sockaddr_in *from, struct sockaddr_in *dest, size_t len)
+static int ip4_mktpl(nat_iphdr_t *ip, struct sockaddr_in6 *from, struct sockaddr_in6 *dest, size_t len)
 {
 	unsigned char tmp[] = {
 		0x45, 0x00, 0x00, 0x50, 0x3e, 0x65, 0x00, 0x00,
@@ -205,8 +206,8 @@ static int ip4_mktpl(nat_iphdr_t *ip, struct sockaddr_in *from, struct sockaddr_
 	};
 
 	memcpy(ip, tmp, sizeof(*ip));
-	ip->ip_src = from->sin_addr;
-	ip->ip_dst = dest->sin_addr;
+	inet_6to4(&ip->ip_src, &from->sin6_addr);
+	inet_6to4(&ip->ip_dst, &dest->sin6_addr);
 	ip->ip_len = htons(len + 8 + 20);
 	ip->ip_sum = 0;
 	ip->ip_sum = ip_checksum(ip, sizeof(*ip));
@@ -214,17 +215,17 @@ static int ip4_mktpl(nat_iphdr_t *ip, struct sockaddr_in *from, struct sockaddr_
 	return 0;
 }
 
-static int udp_mktpl(nat_udphdr_t *uh, struct sockaddr_in *from, struct sockaddr_in *dest, size_t len)
+static int udp_mktpl(nat_udphdr_t *uh, struct sockaddr_in6 *from, struct sockaddr_in6 *dest, size_t len)
 {
 	int ip_sum;
 	unsigned cksum;
 
-	uh->uh_sport = from->sin_port;
-	uh->uh_dport = dest->sin_port;
+	uh->uh_sport = from->sin6_port;
+	uh->uh_dport = dest->sin6_port;
 	uh->uh_ulen  = htons(len + 8);
 
-	cksum = tcpip_checksum(0, &from->sin_addr, 4, 0);
-	ip_sum = tcpip_checksum(cksum, &dest->sin_addr, 4, 0);
+	cksum = tcpip_checksum(0, &from->sin6_addr, 16, 0);
+	ip_sum = tcpip_checksum(cksum, &dest->sin6_addr, 16, 0);
 
 	uh->uh_sum   = 0;
     uh->uh_sum = udp_checksum(ip_sum, uh, sizeof(*uh) + len);
@@ -312,7 +313,7 @@ struct dns_cname {
     const char *alias;
 };
 
-int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *from)
+int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in6 *from)
 {
 	int i;
 	int have_suffixes = 0;
@@ -325,7 +326,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in *fro
 	struct dns_parser parser;
 	struct dns_question *que;
 	struct dns_resource *res;
-	struct sockaddr_in *dest;
+	struct sockaddr_in6 *dest;
 
 	if (NULL == dns_parse(&parser, (uint8_t *) packet, len)) {
 		return -1;

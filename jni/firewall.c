@@ -31,7 +31,7 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 #define CPTR(ptr) ((char *)(ptr))
 int set_linkfailure();
 int is_tethering_dns(struct in_addr);
-int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from, int nswrap);
+int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest, struct sockaddr_in6 *from, int nswrap);
 
 static const char _inet_prefix[] = "104.16.0.0/12 184.84.0.0/14 23.64.0.0/14 23.32.0.0/11 96.6.0.0/15 162.125.0.0/16 203.0.0.0/8 66.6.32.0/20 199.59.148.0/22 31.13.70.0/23 108.160.160.0/20 8.8.0.0/16 64.18.0.0/20 64.233.160.0/19 66.102.0.0/20 66.249.80.0/20 72.14.192.0/18 74.125.0.0/16 108.177.8.0/21 173.194.0.0/16 207.126.144.0/20 209.85.128.0/17 216.58.192.0/19 216.239.32.0/19 172.217.0.0/19";
 static const int _firewall_always_off = 1;
@@ -308,8 +308,8 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 
 	u_long dst_ns;
 	int nswrap, istether = 0;
-	struct sockaddr_in dest;
-	struct sockaddr_in from;
+	struct sockaddr_in6 dest;
+	struct sockaddr_in6 from;
 
 	ip = (nat_iphdr_t *)packet;
 
@@ -341,7 +341,7 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 
 		switch(htons(uh->uh_dport)) {
 			case 53:
-				dst_ns = ip->ip_dst.s_addr ^ htonl(1);
+				dst_ns = ip->ip_dst.s_addr ^ htonl(2);
 				nswrap = (ip->ip_dst.s_addr == htonl(0x8080404) || dst_ns == ip->ip_src.s_addr);
 #ifdef __ANDROID__
 				istether = 0; // is_tethering_dns(ip->ip_dst);
@@ -349,13 +349,13 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 				set_ack_type(ACK_TYPE_NEED);
 				if ((nswrap || istether) &&
 						is_local(ip->ip_src) && CPTR(uh + 1) < (packet + len)) {
-					dest.sin_family = AF_INET;
-					dest.sin_port   = uh->uh_dport;
-					dest.sin_addr   = ip->ip_dst;
+					dest.sin6_family = AF_INET6;
+					dest.sin6_port   = uh->uh_dport;
+					inet_4to6(&dest.sin6_addr, &ip->ip_dst);
 
-					from.sin_family = AF_INET;
-					from.sin_port   = uh->uh_sport;
-					from.sin_addr   = ip->ip_src;
+					from.sin6_family = AF_INET6;
+					from.sin6_port   = uh->uh_sport;
+					inet_4to6(&from.sin6_addr, &ip->ip_src);
 
 					if (-1 == resolv_invoke(dnsfd, CPTR(uh + 1), packet + len - CPTR(uh + 1), &dest, &from, istether)) {
 						if (errno != ENOBUFS && errno != EAGAIN) {

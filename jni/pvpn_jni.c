@@ -24,7 +24,7 @@ int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
 int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t *limited);
 int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *pfailure);
-int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
+int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in6 *from);
 
 char * get_tcpup_data(int *len, u_long *dest);
 char * get_tcpip_data(int *len);
@@ -45,7 +45,7 @@ static int _off_powersave = 0;
 static time_t _time_powersave = 0;
 
 static union {
-    struct sockaddr_in in;
+    // struct sockaddr_in in;
     struct sockaddr_in6 in6;
 } ll_addr = {}, tmp_addr = {};
 
@@ -59,7 +59,7 @@ static int _total_tx_bytes = 0;
 static int _total_rx_pkt = 0;
 static int _total_rx_bytes = 0;
 
-extern struct low_link_ops udp_ops, udp6_ops, icmp_ops;
+extern struct low_link_ops udp_ops, icmp_ops;
 
 static int check_link_failure(int txretval)
 {
@@ -287,7 +287,6 @@ static int get_pendingfds(int elements[], int length)
 static int _link_fd = -1;
 static struct low_link_ops *_link_ops[10] = {NULL};
 static union {
-    struct sockaddr_in in;
     struct sockaddr_in6 in6;
 } _last_bind[10] = {};
 
@@ -295,23 +294,14 @@ static int bind_any_address(int netfd)
 {
 	int error;
 	union {
-		struct sockaddr sa;
-		struct sockaddr_in sin;
 		struct sockaddr_in6 sin6;
 	} u0;
 
-        u0.sin.sin_family = AF_INET;
-        u0.sin.sin_port   = 0;
-        u0.sin.sin_addr.s_addr   = 0;
+	u0.sin.sin6_family = AF_INET6;
+	u0.sin.sin6_port   = 0;
+	u0.sin.sin6_addr   = in6addr_any;
 
 	error = bind(netfd, &u0.sa, sizeof(u0));
-
-        if (error) {
-            u0.sin6.sin6_family = AF_INET6;
-            u0.sin6.sin6_port   = 0;
-            u0.sin6.sin6_addr   = in6addr_any;
-	    error = bind(netfd, &u0.sa, sizeof(u0));
-        }
 
 	return error;
 }
@@ -319,22 +309,16 @@ static int bind_any_address(int netfd)
 static int bind_last_address(struct low_link_ops *ops, int netfd, int which)
 {
 	int error;
-        union {
-            struct sockaddr_in in;
-            struct sockaddr_in6 in6;
-        } sin_addr;
+	union {
+		struct sockaddr_in6 in6;
+	} sin_addr;
 
-// _last_bind[which];
+	// _last_bind[which];
 
-	sin_addr.in.sin_family = AF_INET;
-	sin_addr.in.sin_port   = _last_bind[which].in.sin_port;
-	sin_addr.in.sin_addr.s_addr = 0;
+	sin_addr.in.sin6_family = AF_INET6;
+	sin_addr.in.sin6_port   = _last_bind[which].in.sin_port;
+	sin_addr.in.sin6_addr   = in6addr_any;
 
-        if (ops == &udp6_ops) {
-            sin_addr.in6.sin6_family = AF_INET6;
-            sin_addr.in6.sin6_port   = _last_bind[which].in6.sin6_port;
-            sin_addr.in6.sin6_addr   = in6addr_any;
-        }
 
 	error = (*ops->bind_addr)(netfd, (struct sockaddr *)&sin_addr, sizeof(sin_addr));
 	if (error != 0) {
@@ -374,10 +358,6 @@ static int vpn_jni_alloc(JNIEnv *env, jclass clazz, int type)
 
 			case IPPROTO_UDP:
 				*link_ops = &udp_ops;
-				break;
-
-			case IPPROTO_IPV6:
-				*link_ops = &udp6_ops;
 				break;
 
 			default:
@@ -427,31 +407,17 @@ static int vpn_jni_set_server(JNIEnv *env, jclass clazz, jint which, jstring ser
 	int adjust = (*link_ops->get_adjust)();
 	_disconnected = 0;
 
-        if (link_ops == &udp6_ops) {
-            ll_addr.in6.sin6_family = AF_INET6;
-            ll_addr.in6.sin6_port   = htons(138);
+	ll_addr.in6.sin6_family = AF_INET6;
+	ll_addr.in6.sin6_port   = htons(138);
 
-            port_ptr = strchr(_domain, ']');
-            if (port_ptr != NULL) {
-                *port_ptr++ = 0;
-                ll_addr.in6.sin6_port = htons(atoi(port_ptr + 1));
-            }
+	port_ptr = strchr(_domain, ']');
+	if (port_ptr != NULL) {
+		*port_ptr++ = 0;
+		ll_addr.in6.sin6_port = htons(atoi(port_ptr + 1));
+	}
 
-            inet_pton(AF_INET6, _domain + (*_domain == '['), &ll_addr.in6.sin6_addr);
-	    set_tcp_mss_by_mtu(1500 - 40 - adjust);
-        } else {
-            ll_addr.in.sin_port   = htons(138);
-
-            port_ptr = strchr(_domain, ':');
-            if (port_ptr != NULL) {
-                *port_ptr++ = 0;
-                ll_addr.in.sin_port = htons(atoi(port_ptr));
-            }
-
-            ll_addr.in.sin_family = AF_INET;
-            ll_addr.in.sin_addr.s_addr = inet_addr(_domain);
-	    set_tcp_mss_by_mtu(1500 - 20 - adjust);
-        }
+	inet_pton(AF_INET6, _domain + (*_domain == '['), &ll_addr.in6.sin6_addr);
+	set_tcp_mss_by_mtu(1500 - 40 - adjust);
 
 	return 0;
 }

@@ -7,19 +7,35 @@
 #define NSTYPE_SOA   6
 #define NSTYPE_PTR  12
 #define NSTYPE_MX   15
+#define NSTYPE_TXT  16
 #define NSTYPE_AAAA 28
 #define NSTYPE_SRV  33
+#define NSTYPE_DNAME 39
 #define NSTYPE_OPT  41
+#define NSTYPE_DS  43
+#define NSTYPE_RRSIG  46
+#define NSTYPE_NSEC   47
+#define NSTYPE_NSEC3  50
+#define NSTYPE_HTTPS  65
+#define NSTYPE_ANY    0xffff
 
 #define NSSIG_SOA   "ssuuuuu"
 #define NSSIG_MX    "qs"
 #define NSSIG_CNAME "s"
+#define NSSIG_DNAME "s"
 #define NSSIG_NS    "s"
 #define NSSIG_SRV   "qqqs"
 #define NSSIG_PTR   "s"
 #define NSSIG_A     "A"
+#define NSSIG_TXT   "B"
 #define NSSIG_AAAA  "AAAA"
+#define NSSIG_NSEC  "B"
+#define NSSIG_NSEC3 "B"
+#define NSSIG_RRSIG "B"
 #define NSSIG_OPT   "B"
+#define NSSIG_DS   "B"
+// #define NSSIG_HTTPS "qsqqs"
+#define NSSIG_HTTPS "B"
 
 #define MAX_RECORD_COUNT 32
 // #define DN_EXPANDED 0x8000

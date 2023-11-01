@@ -354,7 +354,7 @@ int vpn_tun_alloc(const char *name)
 {
 	WSADATA data;
 	WSAStartup(0x101, &data);
-	int tunfd = socket(AF_INET, SOCK_DGRAM, 0);
+	int tunfd = socket(AF_INET6, SOCK_DGRAM, 0);
 
 	tun_open(name, "192.168.100.11", 24, 0);
 	_handle_net = WSACreateEvent();

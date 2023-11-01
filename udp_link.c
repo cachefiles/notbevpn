@@ -23,7 +23,7 @@ static int udp_low_link_create(void)
 {
 	int bufsiz, devfd;
 
-	devfd = socket(AF_INET, SOCK_DGRAM, 0);
+	devfd = socket(AF_INET6, SOCK_DGRAM, 0);
 
 	LOG_DEBUG("UDP created: %d %d\n", devfd, _ack_count);
 	TUNNEL_PADDIND_DNS[2] &= ~0x80;
@@ -78,13 +78,13 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 		if (++_ack_count < 11) {
 			_ack_start_time = time(NULL);
 		} else if (_ack_start_time + 2 < time(NULL)) {
-			sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in)));
+			sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, ll_len);
 			return -1;
 		}
 	}
 
 	protect_reset(IPPROTO_UDP, _crypt_stream, len, ll_addr, ll_len);
-	return sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in)));
+	return sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, ll_len);
 }
 
 static int udp_low_link_adjust(void)
@@ -95,12 +95,12 @@ static int udp_low_link_adjust(void)
 
 static int udp_low_link_bind_addr(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-	struct sockaddr_in zero_addr = {};
+	struct sockaddr_in6 zero_addr = {};
 	if (_ack_count < 11)
 		return bind(sockfd, addr, addrlen);
-	zero_addr.sin_family = AF_INET;
-	zero_addr.sin_port   = 0;
-	zero_addr.sin_addr.s_addr   = htonl(INADDR_ANY);
+	zero_addr.sin6_family = AF_INET6;
+	zero_addr.sin6_port   = 0;
+	zero_addr.sin6_addr   = in6addr_any;
 	return bind(sockfd, (const struct sockaddr *)&zero_addr, addrlen);
 }
 

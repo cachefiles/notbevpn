@@ -556,7 +556,6 @@ static nat_conntrack_ops ip6_conntrack_ops = {
 };
 
 struct _sockaddr_union {
-	struct sockaddr_in in;
 	struct sockaddr_in6 in6;
 };
 
@@ -568,14 +567,12 @@ static int tcpup_expand_dest(struct _sockaddr_union *sau, uint8_t *dsaddr, size_
 	switch (*p) {
 		case RELAY_IPV4:
 			assert(p[1] == 0);
-			sau->in.sin_family = AF_INET;
+			sau->in6.sin6_family = AF_INET6;
 			p += 2;
-			memcpy(&sau->in.sin_port, p, 2);
+			memcpy(&sau->in6.sin6_port, p, 2);
 			p += 2;
-			memcpy(&sau->in.sin_addr, p, 4);
+			inet_4to6(&sau->in6.sin6_addr, p);
 			p += 4;
-			assert (sizeof(sau->in.sin_addr) == 4);
-			assert (sizeof(sau->in.sin_port) == 2);
 			assert (p == dsaddr + dslen);
 			break;
 
@@ -631,9 +628,9 @@ static nat_conntrack_t * newconn_tcpup(struct tcpuphdr *hdr)
 		conn->s.ip_dst.s_addr = hdr->th_conv;
 
 		log_verbose("new item %p\n", conn);
-		if (sau.in.sin_family == AF_INET) {
-			conn->c.th_sport = sau.in.sin_port;
-			conn->c.ip_src   = sau.in.sin_addr;
+		if (sau.in6.sin6_family == AF_INET) {
+			conn->c.th_sport = sau.in6.sin6_port;
+			inet_6to4(&conn->c.ip_src, &sau.in6.sin6_addr);
 
 			conn->c.th_dport = parts[0];
 			conn->c.ip_dst.s_addr = htonl(parts[1]| 0x64400000);
