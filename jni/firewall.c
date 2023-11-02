@@ -301,6 +301,8 @@ int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t 
 	return 0;
 }
 
+#define tun_write write
+
 int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure_try)
 {
 	nat_iphdr_t *ip;

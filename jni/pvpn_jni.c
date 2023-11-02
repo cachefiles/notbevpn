@@ -245,7 +245,7 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 				continue;
 			}
 
-			len = resolv_return(bufsize, packet, len, &tmp_addr);
+			len = resolv_return(bufsize, packet, len, &tmp_addr.in6);
 			if (len > 0) {
 				len = tun_write(tunfd, packet, len);
 			}
@@ -293,13 +293,14 @@ static union {
 static int bind_any_address(int netfd)
 {
 	int error;
-	union {
-		struct sockaddr_in6 sin6;
-	} u0;
+        union {
+            struct sockaddr sa;
+            struct sockaddr_in6 sin6;
+        } u0;
 
-	u0.sin.sin6_family = AF_INET6;
-	u0.sin.sin6_port   = 0;
-	u0.sin.sin6_addr   = in6addr_any;
+	u0.sin6.sin6_family = AF_INET6;
+	u0.sin6.sin6_port   = 0;
+	u0.sin6.sin6_addr   = in6addr_any;
 
 	error = bind(netfd, &u0.sa, sizeof(u0));
 
@@ -315,9 +316,9 @@ static int bind_last_address(struct low_link_ops *ops, int netfd, int which)
 
 	// _last_bind[which];
 
-	sin_addr.in.sin6_family = AF_INET6;
-	sin_addr.in.sin6_port   = _last_bind[which].in.sin_port;
-	sin_addr.in.sin6_addr   = in6addr_any;
+	sin_addr.in6.sin6_family = AF_INET6;
+	sin_addr.in6.sin6_port   = _last_bind[which].in6.sin6_port;
+	sin_addr.in6.sin6_addr   = in6addr_any;
 
 
 	error = (*ops->bind_addr)(netfd, (struct sockaddr *)&sin_addr, sizeof(sin_addr));

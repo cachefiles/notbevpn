@@ -20,18 +20,22 @@ int set_ack_type(int type)
 int packet_decrypt(unsigned short key, void *dst, const void *src, size_t len)
 {
 	// memmove(dst, src, len);
-	uint8_t * fdst = dst, * fsrc = src;
+        int i;
+	uint8_t * fdst = dst;
+        const uint8_t * fsrc = src;
 
-	for (int i = 0; i < len; i++) fdst[i] = fsrc[i] ^ 0x0f;
+	for (i = 0; i < len; i++) fdst[i] = fsrc[i] ^ 0x0f;
 	return 0;
 }
 
 int packet_encrypt(unsigned short key, void *dst, const void *src, size_t len)
 {
 	// memmove(dst, src, len);
-	uint8_t * fdst = dst, * fsrc = src;
+        int i;
+	uint8_t * fdst = dst;
+        const uint8_t * fsrc = src;
 
-	for (int i = 0; i < len; i++) fdst[i] = fsrc[i] ^ 0x0f;
+	for (i = 0; i < len; i++) fdst[i] = fsrc[i] ^ 0x0f;
 	return 0;
 }
 
@@ -90,11 +94,11 @@ int inet_4to6(void *dst, const void *src)
 
 int inet_6to4(void *dst, const void *src)
 {
-	char *v4ip = (char *)dst;
-	const char *v6ip = (const char *)src;
+	uint32_t *v4ip = (uint32_t *)dst;
+	const uint32_t *v6ip = (const uint32_t *)src;
 
-	if (IN6_IS_ADDR_V4MAPPED(src))
-		memmove(v4ip, v6ip + 12, 4);
+	if (v6ip[2] == htonl(0xffff))
+                *v4ip = v6ip[3];
 
 	return 0;
 }
