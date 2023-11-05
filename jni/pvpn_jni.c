@@ -392,6 +392,31 @@ static int vpn_jni_set_lostlink(JNIEnv *env, jclass clazz, jint which)
 	return 0;
 }
 
+static int vpn_jni_set_dns_shell(JNIEnv *env, jclass clazz, jstring server)
+{
+	char dummy[16], envb[256];
+	char *port_ptr = NULL;
+	char _domain[64] = {};
+	const char *domain = (*env)->GetStringUTFChars(env, server, 0);
+
+	strncpy(_domain, domain, sizeof(_domain) -1);
+
+	(*env)->ReleaseStringUTFChars(env, server, domain);
+
+	if (strchr(_domain, ':') == NULL) {
+		if (inet_pton(AF_INET, _domain, &dummy)) {
+			snprintf(envb, sizeof(envb), "::ffff:%s", _domain);
+			setenv("NAMESERVER", envb, 1);
+		}
+	} else {
+		if (inet_pton(AF_INET6, _domain, &dummy)) {
+			setenv("NAMESERVER", _domain, 1);
+		}
+	}
+
+	return 0;
+}
+
 int set_tcp_mss_by_mtu(int mtu);
 static int vpn_jni_set_server(JNIEnv *env, jclass clazz, jint which, jstring server)
 {
@@ -528,6 +553,7 @@ static JNINativeMethod methods[] = {
 	{"vpn_alloc", "(I)I", (void*)vpn_jni_alloc},
 
 	{"vpn_set_server", "(ILjava/lang/String;)I", (void*)vpn_jni_set_server},
+	{"vpn_set_dns_shell", "(Ljava/lang/String;)I", (void*)vpn_jni_set_dns_shell},
 	{"vpn_set_lostlink", "(I)I", (void*)vpn_jni_set_lostlink},
 	{"vpn_set_disconnect", "(I)I", (void*)vpn_jni_set_disconnect},
 

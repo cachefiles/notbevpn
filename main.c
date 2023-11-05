@@ -348,6 +348,7 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
+	setenv("NAMESERVER", "::ffff:114.114.114.114", 0);
 	tunfd = vpn_tun_alloc(tun_name);
 	if (tunfd == -1) {
 		perror("vpn_tun_alloc: ");
