@@ -54,7 +54,7 @@ struct request_context {
     size_t retries_times;
     u_char request_ident[16];
     u_char request_source[128];
-    struct sockaddr_in request_target;
+    struct sockaddr_in6 request_target;
 };
 
 static int carrier = 0;
@@ -195,7 +195,7 @@ static u_int stun_do_packet(int fildes, u_char *but, size_t len, struct sockaddr
 	struct stun_request_args_base args0;
 
 	if (len > 0 && len < MIN_PACKET_LEN) {
-		struct sockaddr_in so;
+		struct sockaddr_in6 so;
 		clear_carrier();
 		memcpy(&so, from, fromlen);
 		fprintf(stderr, "incoming: %s:%d\n",
@@ -214,7 +214,7 @@ static u_int stun_do_packet(int fildes, u_char *but, size_t len, struct sockaddr
 	}
 
 	{
-		struct sockaddr_in so;
+		struct sockaddr_in6 so;
 		clear_carrier();
 		memcpy(&so, from, fromlen);
 		fprintf(stderr, "incoming: %s:%d\n",
@@ -236,7 +236,7 @@ static u_int stun_do_packet(int fildes, u_char *but, size_t len, struct sockaddr
 		size_t len;
 		u_char *adj;
 		u_char d_buf[2048];
-		struct sockaddr_in d_addr;
+		struct sockaddr_in6 d_addr;
 		socklen_t namelen = sizeof(d_addr);
 
 		struct {
@@ -406,9 +406,9 @@ static void load_stun_config(int argc, char *argv[])
 		ctx->retries_times = 0;
 		ctx->flags = STUN_FLAG_CTREAT;
 
-		ctx->request_target.sin_family = AF_INET;
-		ctx->request_target.sin_port   = htons(d_port);
-		ctx->request_target.sin_addr.s_addr =  target;
+		ctx->request_target.sin6_family = AF_INET6;
+		ctx->request_target.sin6_port   = htons(d_port);
+		inet_4to6(&ctx->request_target.sin6_addr, &target);
 
 		fprintf(stderr, "%s ", argv[i]);
 
@@ -454,19 +454,19 @@ int main(int argc, char *argv[])
 	size_t last_idle;
 	size_t last_ticks;
 	struct sockaddr yours;
-	struct sockaddr_in mime;
+	struct sockaddr_in6 mime;
 
 #ifdef WIN32
 	WSADATA data;
 	WSAStartup(0x101, &data);
 #endif
 
-	fildes = socket(AF_INET, SOCK_DGRAM, 0);
+	fildes = socket(AF_INET6, SOCK_DGRAM, 0);
 	assert(fildes != -1);
 
-	mime.sin_family = AF_INET;
-	mime.sin_port   = htons(9000);
-	mime.sin_addr.s_addr = 0;
+	mime.sin6_family = AF_INET6;
+	mime.sin6_port   = htons(9000);
+	mime.sin6_addr   = {};
 
 	for (i = 1; i < argc; i++) {
 		if (0 == strncmp(argv[i], "-p", 2)) {

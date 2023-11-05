@@ -25,15 +25,13 @@ typedef struct ip6_hdr nat_ip6hdr_t;
 #define VERSION_IPV6 6
 
 ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet);
-int check_blocked_silent(int tunfd, /* int dnsfd, */ char *packet, size_t len, time_t *limited);
-int check_blocked_normal(int tunfd, /* int dnsfd, */ char *packet, size_t len, int *failure_try);
+int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t *limited);
+int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure_try);
 
 #define CPTR(ptr) ((char *)(ptr))
 int set_linkfailure();
-#if 0
 int is_tethering_dns(struct in_addr);
-int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in *dest, struct sockaddr_in *from, int nswrap);
-#endif
+int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest, struct sockaddr_in6 *from, int nswrap);
 
 static const char _inet_prefix[] = "104.16.0.0/12 184.84.0.0/14 23.64.0.0/14 23.32.0.0/11 96.6.0.0/15 162.125.0.0/16 203.0.0.0/8 66.6.32.0/20 199.59.148.0/22 31.13.70.0/23 108.160.160.0/20 8.8.0.0/16 64.18.0.0/20 64.233.160.0/19 66.102.0.0/20 66.249.80.0/20 72.14.192.0/18 74.125.0.0/16 108.177.8.0/21 173.194.0.0/16 207.126.144.0/20 209.85.128.0/17 216.58.192.0/19 216.239.32.0/19 172.217.0.0/19";
 static const int _firewall_always_off = 1;
@@ -217,7 +215,7 @@ static int is_local(struct in_addr addr)
 	return (nat_mask & ~0xFFF) || (nat_mask & 0x3F) == 1;
 }
 
-int check_blocked_silent(int tunfd, /* int dnsfd, */ char *packet, size_t len, time_t *limited)
+int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t *limited)
 {
 	int ignore = 0;
 	ssize_t count; 
@@ -242,7 +240,7 @@ int check_blocked_silent(int tunfd, /* int dnsfd, */ char *packet, size_t len, t
 
 			case 53:
 				LOG_DEBUG("convert!%d udp/53 to: :%d -> %s\n", tunfd, htons(uh->uh_sport), inet_ntoa(ip->ip_dst));
-				return check_blocked_normal(tunfd, /* dnsfd, */ packet, len, &ignore);
+				return check_blocked_normal(tunfd, dnsfd, packet, len, &ignore);
 
 			default:
 				break;
@@ -304,15 +302,16 @@ int check_blocked_silent(int tunfd, /* int dnsfd, */ char *packet, size_t len, t
 }
 
 #define tun_write write
-int check_blocked_normal(int tunfd, /* int dnsfd, */ char *packet, size_t len, int *failure_try)
+
+int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure_try)
 {
 	nat_iphdr_t *ip;
 	nat_udphdr_t *uh;
 
 	u_long dst_ns;
 	int nswrap, istether = 0;
-	struct sockaddr_in dest;
-	struct sockaddr_in from;
+	struct sockaddr_in6 dest;
+	struct sockaddr_in6 from;
 
 	ip = (nat_iphdr_t *)packet;
 
@@ -325,9 +324,9 @@ int check_blocked_normal(int tunfd, /* int dnsfd, */ char *packet, size_t len, i
 
 		switch(htons(uh->uh_sport)) {
 			case 8053:
-				/* match: 10.2.0.1:8053 -> 8.8.4.4:xxxx */
-				if (ip->ip_src.s_addr == htonl(0xa020001) && ip->ip_dst.s_addr == htonl(0x08080404) ) {
-					/* do nat to: 8.8.4.4:53 -> 10.2.0.1:xxxx */
+				/* match: 10.2.0.1:8053 -> 1.0.0.1:xxxx */
+				if (ip->ip_src.s_addr == htonl(0xa020001) && ip->ip_dst.s_addr == htonl(0x01000001) ) {
+					/* do nat to: 1.0.0.1:53 -> 10.2.0.1:xxxx */
 					u_long swpval = ip->ip_src.s_addr;
 					ip->ip_src.s_addr = ip->ip_dst.s_addr;
 					ip->ip_dst.s_addr = swpval;
@@ -344,9 +343,34 @@ int check_blocked_normal(int tunfd, /* int dnsfd, */ char *packet, size_t len, i
 
 		switch(htons(uh->uh_dport)) {
 			case 53:
-				/* match: 10.2.0.1:xxxx -> 8.8.4.4:53 */
-				if (ip->ip_src.s_addr == htonl(0xa020001) && ip->ip_dst.s_addr == htonl(0x08080404) ) {
-					/* do nat to: 8.8.4.4:xxxx -> 10.2.0.1:8053 */
+				dst_ns = ip->ip_dst.s_addr ^ htonl(2);
+				nswrap = (ip->ip_dst.s_addr == htonl(0x8080404) || dst_ns == ip->ip_src.s_addr);
+#ifdef __ANDROID__
+				istether = 0; // is_tethering_dns(ip->ip_dst);
+#endif
+				set_ack_type(ACK_TYPE_NEED);
+				if ((nswrap || istether) &&
+						is_local(ip->ip_src) && CPTR(uh + 1) < (packet + len)) {
+					dest.sin6_family = AF_INET6;
+					dest.sin6_port   = uh->uh_dport;
+					inet_4to6(&dest.sin6_addr, &ip->ip_dst);
+
+					from.sin6_family = AF_INET6;
+					from.sin6_port   = uh->uh_sport;
+					inet_4to6(&from.sin6_addr, &ip->ip_src);
+
+					if (-1 == resolv_invoke(dnsfd, CPTR(uh + 1), packet + len - CPTR(uh + 1), &dest, &from, istether)) {
+						if (errno != ENOBUFS && errno != EAGAIN) {
+							set_linkfailure();
+						}
+					}
+					(*failure_try)++;
+					return 1;
+				}
+
+				/* match: 10.2.0.1:xxxx -> 1.0.0.1:53 */
+				if (ip->ip_src.s_addr == htonl(0xa020001) && ip->ip_dst.s_addr == htonl(0x01000001) ) {
+					/* do nat to: 1.0.0.1:xxxx -> 10.2.0.1:8053 */
 					u_long swpval = ip->ip_src.s_addr;
 					ip->ip_src.s_addr = ip->ip_dst.s_addr;
 					ip->ip_dst.s_addr = swpval;
@@ -359,32 +383,6 @@ int check_blocked_normal(int tunfd, /* int dnsfd, */ char *packet, size_t len, i
 					tun_write(tunfd, packet, len);
 					return 1;
 				}
-#if 0
-				dst_ns = ip->ip_dst.s_addr ^ htonl(1);
-				nswrap = (ip->ip_dst.s_addr == htonl(0x8080404) || dst_ns == ip->ip_src.s_addr);
-#ifdef __ANDROID__
-				istether = 0; // is_tethering_dns(ip->ip_dst);
-#endif
-				set_ack_type(ACK_TYPE_NEED);
-				if ((nswrap || istether) &&
-						is_local(ip->ip_src) && CPTR(uh + 1) < (packet + len)) {
-					dest.sin_family = AF_INET;
-					dest.sin_port   = uh->uh_dport;
-					dest.sin_addr   = ip->ip_dst;
-
-					from.sin_family = AF_INET;
-					from.sin_port   = uh->uh_sport;
-					from.sin_addr   = ip->ip_src;
-
-					if (-1 == resolv_invoke(dnsfd, CPTR(uh + 1), packet + len - CPTR(uh + 1), &dest, &from, istether)) {
-						if (errno != ENOBUFS && errno != EAGAIN) {
-							set_linkfailure();
-						}
-					}
-					(*failure_try)++;
-					return 1;
-				}
-#endif
 
 			default:
 				break;

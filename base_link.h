@@ -50,4 +50,8 @@ int setblockopt(int fd, int block);
 int protect_match(void *buf, size_t len);
 int protect_reset(int proto, void *buf, size_t len, const struct sockaddr *ll_addr, socklen_t ll_len);
 
+const char *ntop6(const void *v4ip);
+int inet_4to6(void *dst, const void *src);
+int inet_6to4(void *dst, const void *src);
+
 #endif

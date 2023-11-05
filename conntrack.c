@@ -119,10 +119,6 @@ static int cksum_delta(void *ptr, size_t len)
 	return acc;
 }
 
-#if 0
-if (0xffff ^ cksum) *ipchecksum = update_check_sum(*ipchecksum + (0xffff^cksum), 0, 0);
-#endif
-
 static uint16_t update_cksum(uint16_t old, int delta)
 {
 	int acc;
@@ -1039,11 +1035,11 @@ ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit)
 	return len;
 }
 
-void tcp_nat_init(struct sockaddr_in *ifaddr, struct sockaddr_in *target)
+void tcp_nat_init(struct sockaddr_in6 *ifaddr, struct sockaddr_in6 *target)
 {
-	_nat_c_addr = ifaddr->sin_addr.s_addr;
-	_nat_s_addr = target->sin_addr.s_addr;
-	_nat_s_port = target->sin_port;
+	inet_6to4(&_nat_c_addr, &ifaddr->sin6_addr);
+	inet_6to4(&_nat_s_addr, &target->sin6_addr);
+	_nat_s_port = target->sin6_port;
 
 	_nat_ssl_port = htons(8080);
 	_nat_web_port = htons(8443);
