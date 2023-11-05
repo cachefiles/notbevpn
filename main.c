@@ -30,8 +30,8 @@ int tun_write(int fd, void *buf, size_t len);
 
 ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit);
 ssize_t tcpip_frag_input(void *packet, size_t len, size_t limit);
-int check_blocked_normal(int tunfd, /* int dnsfd, */ char *packet, size_t len, int *failure);
-int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
+int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure);
+int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in6 *from);
 
 int set_linkfailure()
 {
@@ -55,7 +55,7 @@ static void usage(const char *prog_name)
 	return;
 }
 
-int parse_sockaddr_in(struct sockaddr_in *info, const char *address)
+int parse_sockaddr_in(struct sockaddr_in6 *info, const char *address)
 {
     const char *last;
 
@@ -63,16 +63,20 @@ int parse_sockaddr_in(struct sockaddr_in *info, const char *address)
 #define FLAG_HAVE_ALPHA  2
 #define FLAG_HAVE_NUMBER 4
 #define FLAG_HAVE_SPLIT  8
+#define FLAG_HAVE_LEFT  16
+#define FLAG_HAVE_RIGHT 32
 
     int flags = 0;
     char host[128] = {};
 
-    info->sin_family = AF_INET;
-    info->sin_port   = htons(0);
-    info->sin_addr.s_addr = htonl(0);
+    info->sin6_family = AF_INET6;
+    info->sin6_port   = htons(0);
+    info->sin6_addr   = in6addr_any;
 
     for (last = address; *last; last++) {
         if (isdigit(*last)) flags |= FLAG_HAVE_NUMBER;
+        else if (*last == '[') flags |= FLAG_HAVE_LEFT;
+        else if (*last == ']') flags |= FLAG_HAVE_RIGHT;
         else if (*last == ':') flags |= FLAG_HAVE_SPLIT;
         else if (*last == '.') flags |= FLAG_HAVE_DOT;
         else if (isalpha(*last)) flags |= FLAG_HAVE_ALPHA;
@@ -81,12 +85,15 @@ int parse_sockaddr_in(struct sockaddr_in *info, const char *address)
 
 
     if (flags == FLAG_HAVE_NUMBER) {
-        info->sin_port = htons(atoi(address));
+        info->sin6_port = htons(atoi(address));
         return 0;
     }
 
     if (flags == (FLAG_HAVE_NUMBER| FLAG_HAVE_DOT)) {
-        info->sin_addr.s_addr = inet_addr(address);
+		struct in_addr d = {};
+		inet_pton(AF_INET, address, &d);
+		inet_4to6(&info->sin6_addr, &d);
+		LOG_DEBUG("target is %s %s %d", ntop6(&info->sin6_addr), address, __LINE__);
         return 0;
     }
 
@@ -94,13 +101,14 @@ int parse_sockaddr_in(struct sockaddr_in *info, const char *address)
     if ((flags & ~FLAG_HAVE_NUMBER) == (FLAG_HAVE_ALPHA | FLAG_HAVE_DOT)) {
         host0 = gethostbyname(address);
         if (host0 != NULL)
-            memcpy(&info->sin_addr, host0->h_addr, 4);
+            inet_4to6(&info->sin6_addr, host0->h_addr);
+		LOG_DEBUG("target is %s %s %d", ntop6(&info->sin6_addr), address, __LINE__);
         return 0;
     }
 
     if (flags & FLAG_HAVE_SPLIT) {
         const char *split = strchr(address, ':');
-        info->sin_port = htons(atoi(split + 1));
+        info->sin6_port = htons(atoi(split + 1));
 
         if (strlen(address) < sizeof(host)) {
             strncpy(host, address, sizeof(host));
@@ -108,11 +116,15 @@ int parse_sockaddr_in(struct sockaddr_in *info, const char *address)
 
             if (flags & FLAG_HAVE_ALPHA) {
                 host0 = gethostbyname(host);
-                if (host0 != NULL) memcpy(&info->sin_addr, host0->h_addr, 4);
+                if (host0 != NULL) inet_4to6(&info->sin6_addr, host0->h_addr);
+				LOG_DEBUG("target is %s %s %d", ntop6(&info->sin6_addr), address, __LINE__);
                 return 0;
             }
 
-            info->sin_addr.s_addr = inet_addr(host);
+			struct in_addr d = {};
+			inet_pton(AF_INET, host, &d);
+			inet_4to6(&info->sin6_addr, &d);
+			LOG_DEBUG("target is %s %s %d", ntop6(&info->sin6_addr), address, __LINE__);
         }
     }
 
@@ -192,13 +204,13 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjus
 {
 	int err = 0;
 	int mtu = 1500;
-	int udpfd = socket(AF_INET, SOCK_DGRAM, 0);
+	int udpfd = socket(AF_INET6, SOCK_DGRAM, 0);
 
 	if (udpfd != -1) {
-		err = bind(udpfd, local, sizeof(struct sockaddr_in));
+		err = bind(udpfd, local, sizeof(struct sockaddr_in6));
 		assert(err == 0);
 
-		mtu = get_device_mtu(udpfd, remote, sizeof(struct sockaddr_in), 1500);
+		mtu = get_device_mtu(udpfd, remote, sizeof(struct sockaddr_in6), 1500);
 		close(udpfd);
 	}
 
@@ -209,12 +221,11 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjus
 extern int rx_sum_drop;
 extern struct low_link_ops udp_ops;
 extern struct low_link_ops icmp_ops;
-extern struct low_link_ops udp6_ops;
 
 ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit);
-void tcp_nat_init(struct sockaddr_in *ifaddr, struct sockaddr_in *target);
+void tcp_nat_init(struct sockaddr_in6 *ifaddr, struct sockaddr_in6 *target);
 
-static int run_tun2socks(int tun, struct sockaddr_in *from, struct sockaddr_in *target)
+static int run_tun2socks(int tun, struct sockaddr_in6 *from, struct sockaddr_in6 *target)
 {
 	int len;
 	char buf[MAX_PACKET_SIZE];
@@ -286,14 +297,14 @@ int main(int argc, char *argv[])
 	const char *tun_name = DEFAULT_TUN_NAME;
 	char buf[MAX_PACKET_SIZE];
 
-	int netfd, /* dnsfd, */ error, have_target = 0;
-	struct sockaddr_in ll_addr = {};
-	struct sockaddr_in so_addr = {};
-	struct sockaddr_in tmp_addr = {};
+	int netfd, dnsfd, error, have_target = 0;
+	struct sockaddr_in6 ll_addr = {};
+	struct sockaddr_in6 so_addr = {};
+	struct sockaddr_in6 tmp_addr = {};
 	struct low_link_ops *link_ops = &icmp_ops;
 
-	so_addr.sin_family = AF_INET;
-	so_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	so_addr.sin6_family = AF_INET6;
+	so_addr.sin6_addr = in6addr_any;
 	for (i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-h") == 0) {
 			usage(argv[0]);
@@ -332,11 +343,12 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (have_target == 0 || ll_addr.sin_addr.s_addr == 0) {
+	if (have_target == 0 || !memcmp(&ll_addr.sin6_addr, &in6addr_any, 16)) {
 		usage(argv[0]);
 		return 0;
 	}
 
+	setenv("NAMESERVER", "::ffff:114.114.114.114", 0);
 	tunfd = vpn_tun_alloc(tun_name);
 	if (tunfd == -1) {
 		perror("vpn_tun_alloc: ");
@@ -345,14 +357,12 @@ int main(int argc, char *argv[])
 
 	int save_uid = getuid();
 	setuid(0);
-	run_config_script(tun_name, script, inet_ntoa(ll_addr.sin_addr));
+	run_config_script(tun_name, script, ntop6(&ll_addr.sin6_addr));
 
 	if (0 == strcmp(proto, "tcp")) {
 		return run_tun2socks(tunfd, &so_addr, &ll_addr);
 	} else if (0 == strcmp(proto, "udp")) {
 		link_ops = &udp_ops;
-	} else if (0 == strcmp(proto, "udp6")) {
-		link_ops = &udp6_ops;
 	} else if (0 == strcmp(proto, "icmp")) {
 		link_ops = &icmp_ops;
 	} else {
@@ -376,10 +386,8 @@ int main(int argc, char *argv[])
 	netfd = (*link_ops->create)();
 	assert(netfd != -1);
 
-#if 0
 	dnsfd = (*udp_ops.create)();
 	assert(dnsfd != -1);
-#endif
 
 	setreuid(save_uid, save_uid);
 	bind_to_device(netfd, iface);
@@ -396,7 +404,7 @@ int main(int argc, char *argv[])
 
 	setblockopt(netfd, 0);
 	setblockopt(tunfd, 0);
-	// setblockopt(dnsfd, 0);
+	setblockopt(dnsfd, 0);
 
 	int nready = 0;
 	fd_set readfds;
@@ -424,16 +432,16 @@ int main(int argc, char *argv[])
 			FD_ZERO(&readfds);
 			FD_SET(tunfd, &readfds);
 			FD_SET(netfd, &readfds);
-			// FD_SET(dnsfd, &readfds);
+			FD_SET(dnsfd, &readfds);
 			maxfd = MAX(tunfd, netfd);
-			// maxfd = MAX(maxfd, dnsfd);
+			maxfd = MAX(maxfd, dnsfd);
 
 			timeo.tv_sec  = 1;
 			timeo.tv_usec = 0;
 
 			bug_check++;
 			busy_loop = 0;
-			nready = select_call(maxfd, netfd, /* dnsfd, */ &readfds, &timeo);
+			nready = select_call(maxfd, netfd, dnsfd, &readfds, &timeo);
 			if (nready == -1) {
 				LOG_DEBUG("select failure");
 				if (errno == EINTR) continue;
@@ -453,13 +461,13 @@ int main(int argc, char *argv[])
 						close(netfd);
 						netfd = newfd;
 						bind_to_device(netfd, iface);
-						if (rx_sum_drop > 5) { rx_sum_drop = 0; so_addr.sin_port = 0; }
+						if (rx_sum_drop > 5) { rx_sum_drop = 0; so_addr.sin6_port = 0; }
 						if (bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
 							setblockopt(netfd, 0);
 							nready = _reload = 0;
 						} else {
-							LOG_DEBUG("bindto: %s:%d\n", inet_ntoa(so_addr.sin_addr), htons(so_addr.sin_port));
-							LOG_DEBUG("family: %d %d\n", so_addr.sin_family, newfd);
+							LOG_DEBUG("bindto: %s:%d\n", ntop6(&so_addr.sin6_addr), htons(so_addr.sin6_port));
+							LOG_DEBUG("family: %d %d\n", so_addr.sin6_family, newfd);
 							perror("rebind");
 						}
 					}
@@ -517,7 +525,7 @@ int main(int argc, char *argv[])
 			}
 
 			int ignore = 0;
-			if (check_blocked_normal(tunfd, /* dnsfd, */ packet, len, &ignore)) {
+			if (check_blocked_normal(tunfd, dnsfd, packet, len, &ignore)) {
 				LOG_VERBOSE("ignore blocked data\n");
 				continue;
 			}
@@ -539,7 +547,6 @@ int main(int argc, char *argv[])
 			}
 		}
 
-#if 0
 		if (FD_ISSET(dnsfd, &readfds)) {
 			int bufsize = 1500;
 			packet = (buf + 60);
@@ -559,14 +566,13 @@ int main(int argc, char *argv[])
 				len = tun_write(tunfd, packet, len);
 			}
 		}
-#endif
 
 		assert(bug_check > 0);
 	}
 
 clean:
 	close(netfd);
-	// close(dnsfd);
+	close(dnsfd);
 	vpn_tun_free(tunfd);
 
 	LOG_VERBOSE("exit");

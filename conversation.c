@@ -55,7 +55,6 @@ struct conversation_context {
 	time_t last_active;
 	unsigned conversation;
 	union {
-		struct sockaddr_in in;
 		struct sockaddr_in6 in6;
 	} u;
 };
@@ -68,7 +67,7 @@ static struct net_rdb {
 	u_long peerhop;
 } _route_base[100];
 static int _route_count = 0;
-static union { struct sockaddr_in in; struct sockaddr_in6 in6; struct sockaddr sa; } _gateway;
+static union {  struct sockaddr_in6 in6; struct sockaddr sa; } _gateway;
 
 void set_default_gate(struct sockaddr *hop, size_t len)
 {
@@ -152,7 +151,7 @@ static struct sockaddr * alloc_new_conversation(struct sockaddr *dest, size_t le
 	return dest;
 
 found:
-	assert (len < sizeof(c->u));
+	assert (len <= sizeof(c->u));
 	c->last_active = time(NULL);
 	memcpy(&c->u, dest, len);
 	set_conversation_udata(c);
@@ -177,7 +176,7 @@ struct sockaddr * push_conversation(struct sockaddr *dest, size_t len)
 		return dest;
 	}
 
-	assert (len < sizeof(c->u));
+	assert (len <= sizeof(c->u));
 	c->last_active = time(NULL);
 	memcpy(&c->u, dest, len);
 	return dest;

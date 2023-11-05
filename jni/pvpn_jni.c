@@ -22,9 +22,9 @@
 
 int tcpup_track_stage1(void);
 int tcpup_track_stage2(void);
-int check_blocked_silent(int tunfd, /* int dnsfd,*/ char *packet, size_t len, time_t *limited);
-int check_blocked_normal(int tunfd, /* int dnsfd, */ char *packet, size_t len, int *pfailure);
-int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in *from);
+int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t *limited);
+int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *pfailure);
+int resolv_return(int tunfd, char *packet, size_t len, struct sockaddr_in6 *from);
 
 char * get_tcpup_data(int *len, u_long *dest);
 char * get_tcpip_data(int *len);
@@ -36,9 +36,7 @@ static int last_track_count = 0;
 static int last_track_enable = 0;
 static time_t last_track_time = 0;
 
-#if 0
 static int _dns_fd = -1;
-#endif
 static int _lostlink = 0;
 static int _linkfailure = 0;
 static int _disconnected = 0;
@@ -47,7 +45,7 @@ static int _off_powersave = 0;
 static time_t _time_powersave = 0;
 
 static union {
-    struct sockaddr_in in;
+    // struct sockaddr_in in;
     struct sockaddr_in6 in6;
 } ll_addr = {}, tmp_addr = {};
 
@@ -61,7 +59,7 @@ static int _total_tx_bytes = 0;
 static int _total_rx_pkt = 0;
 static int _total_rx_bytes = 0;
 
-extern struct low_link_ops udp_ops, udp6_ops, icmp_ops;
+extern struct low_link_ops udp_ops, icmp_ops;
 
 static int check_link_failure(int txretval)
 {
@@ -80,19 +78,19 @@ static int is_blocked(int tunfd, char *packet, size_t len, int *failure)
 	time_t time_current = 0;
 
 	if (_off_powersave) {
-		return check_blocked_silent(tunfd, /* _dns_fd, */ packet, len, &_time_powersave);
+		return check_blocked_silent(tunfd, _dns_fd, packet, len, &_time_powersave);
 	} else if (!_is_powersave) {
-		return check_blocked_normal(tunfd, /* _dns_fd, */ packet, len, failure);
+		return check_blocked_normal(tunfd, _dns_fd, packet, len, failure);
 	}
 
 	time(&time_current);
 	_off_powersave = (_time_powersave > time_current) || (_time_powersave + 30 < time_current);
-	check_blocked_silent(-1, /*_dns_fd,*/ packet, len, &_time_powersave);
+	check_blocked_silent(-1, _dns_fd, packet, len, &_time_powersave);
 
 	return 0;
 }
 
-static int vpn_run_loop(int tunfd, int netfd, /* int dnsfd, */ struct low_link_ops *link_ops)
+static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *link_ops)
 {
 	int len;
 	int maxfd;
@@ -126,13 +124,9 @@ static int vpn_run_loop(int tunfd, int netfd, /* int dnsfd, */ struct low_link_o
 			FD_ZERO(&readfds);
 			FD_SET(tunfd, &readfds);
 			FD_SET(netfd, &readfds);
-#if 0
 			FD_SET(dnsfd, &readfds);
-#endif
 			maxfd = MAX(tunfd, netfd);
-#if 0
 			maxfd = MAX(maxfd, dnsfd);
-#endif
 
 			timeo.tv_sec  = 1;
 			timeo.tv_usec = 0;
@@ -237,7 +231,6 @@ static int vpn_run_loop(int tunfd, int netfd, /* int dnsfd, */ struct low_link_o
 			}
 		}
 
-#if 0
 		packet = (buf + 60);
 		if (FD_ISSET(dnsfd, &readfds)) {
 			int bufsize = 1500;
@@ -252,12 +245,11 @@ static int vpn_run_loop(int tunfd, int netfd, /* int dnsfd, */ struct low_link_o
 				continue;
 			}
 
-			len = resolv_return(bufsize, packet, len, &tmp_addr);
+			len = resolv_return(bufsize, packet, len, &tmp_addr.in6);
 			if (len > 0) {
 				len = tun_write(tunfd, packet, len);
 			}
 		}
-#endif
 
 		assert(test > 0);
 	}
@@ -295,31 +287,22 @@ static int get_pendingfds(int elements[], int length)
 static int _link_fd = -1;
 static struct low_link_ops *_link_ops[10] = {NULL};
 static union {
-    struct sockaddr_in in;
     struct sockaddr_in6 in6;
 } _last_bind[10] = {};
 
 static int bind_any_address(int netfd)
 {
 	int error;
-	union {
-		struct sockaddr sa;
-		struct sockaddr_in sin;
-		struct sockaddr_in6 sin6;
-	} u0;
+        union {
+            struct sockaddr sa;
+            struct sockaddr_in6 sin6;
+        } u0;
 
-        u0.sin.sin_family = AF_INET;
-        u0.sin.sin_port   = 0;
-        u0.sin.sin_addr.s_addr   = 0;
+	u0.sin6.sin6_family = AF_INET6;
+	u0.sin6.sin6_port   = 0;
+	u0.sin6.sin6_addr   = in6addr_any;
 
 	error = bind(netfd, &u0.sa, sizeof(u0));
-
-        if (error) {
-            u0.sin6.sin6_family = AF_INET6;
-            u0.sin6.sin6_port   = 0;
-            u0.sin6.sin6_addr   = in6addr_any;
-	    error = bind(netfd, &u0.sa, sizeof(u0));
-        }
 
 	return error;
 }
@@ -327,22 +310,16 @@ static int bind_any_address(int netfd)
 static int bind_last_address(struct low_link_ops *ops, int netfd, int which)
 {
 	int error;
-        union {
-            struct sockaddr_in in;
-            struct sockaddr_in6 in6;
-        } sin_addr;
+	union {
+		struct sockaddr_in6 in6;
+	} sin_addr;
 
-// _last_bind[which];
+	// _last_bind[which];
 
-	sin_addr.in.sin_family = AF_INET;
-	sin_addr.in.sin_port   = _last_bind[which].in.sin_port;
-	sin_addr.in.sin_addr.s_addr = 0;
+	sin_addr.in6.sin6_family = AF_INET6;
+	sin_addr.in6.sin6_port   = _last_bind[which].in6.sin6_port;
+	sin_addr.in6.sin6_addr   = in6addr_any;
 
-        if (ops == &udp6_ops) {
-            sin_addr.in6.sin6_family = AF_INET6;
-            sin_addr.in6.sin6_port   = _last_bind[which].in6.sin6_port;
-            sin_addr.in6.sin6_addr   = in6addr_any;
-        }
 
 	error = (*ops->bind_addr)(netfd, (struct sockaddr *)&sin_addr, sizeof(sin_addr));
 	if (error != 0) {
@@ -384,10 +361,6 @@ static int vpn_jni_alloc(JNIEnv *env, jclass clazz, int type)
 				*link_ops = &udp_ops;
 				break;
 
-			case IPPROTO_IPV6:
-				*link_ops = &udp6_ops;
-				break;
-
 			default:
 				abort();
 				break;
@@ -401,13 +374,9 @@ static int vpn_jni_free(JNIEnv *env, jclass clazz, jint which)
 {
 	_link_ops[which] = NULL;
 	close(_link_fd);
-#if 0
 	close(_dns_fd);
-#endif
 	_link_fd = -1;
-#if 0
 	_dns_fd = -1;
-#endif
 	return 0;
 }
 
@@ -420,6 +389,31 @@ int set_linkfailure()
 static int vpn_jni_set_lostlink(JNIEnv *env, jclass clazz, jint which)
 {
 	_lostlink = 1;
+	return 0;
+}
+
+static int vpn_jni_set_dns_shell(JNIEnv *env, jclass clazz, jstring server)
+{
+	char dummy[16], envb[256];
+	char *port_ptr = NULL;
+	char _domain[64] = {};
+	const char *domain = (*env)->GetStringUTFChars(env, server, 0);
+
+	strncpy(_domain, domain, sizeof(_domain) -1);
+
+	(*env)->ReleaseStringUTFChars(env, server, domain);
+
+	if (strchr(_domain, ':') == NULL) {
+		if (inet_pton(AF_INET, _domain, &dummy)) {
+			snprintf(envb, sizeof(envb), "::ffff:%s", _domain);
+			setenv("NAMESERVER", envb, 1);
+		}
+	} else {
+		if (inet_pton(AF_INET6, _domain, &dummy)) {
+			setenv("NAMESERVER", _domain, 1);
+		}
+	}
+
 	return 0;
 }
 
@@ -439,31 +433,29 @@ static int vpn_jni_set_server(JNIEnv *env, jclass clazz, jint which, jstring ser
 	int adjust = (*link_ops->get_adjust)();
 	_disconnected = 0;
 
-        if (link_ops == &udp6_ops) {
-            ll_addr.in6.sin6_family = AF_INET6;
-            ll_addr.in6.sin6_port   = htons(138);
+	ll_addr.in6.sin6_family = AF_INET6;
+	ll_addr.in6.sin6_port   = htons(138);
 
-            port_ptr = strchr(_domain, ']');
-            if (port_ptr != NULL) {
-                *port_ptr++ = 0;
-                ll_addr.in6.sin6_port = htons(atoi(port_ptr + 1));
-            }
+	port_ptr = strchr(_domain, ']');
+	if (port_ptr != NULL) {
+		*port_ptr++ = 0;
+		ll_addr.in6.sin6_port = htons(atoi(port_ptr + 1));
+	}
 
-            inet_pton(AF_INET6, _domain + (*_domain == '['), &ll_addr.in6.sin6_addr);
-	    set_tcp_mss_by_mtu(1500 - 40 - adjust);
-        } else {
-            ll_addr.in.sin_port   = htons(138);
+	struct in_addr sin_addr = {};
+	const char *left = strchr(_domain, ':');
+	const char *right = strrchr(_domain, ':');
 
-            port_ptr = strchr(_domain, ':');
-            if (port_ptr != NULL) {
-                *port_ptr++ = 0;
-                ll_addr.in.sin_port = htons(atoi(port_ptr));
-            }
+	if (left != NULL && left == right) {
+		port_ptr = (char *)left;
+		*port_ptr = 0;
+		ll_addr.in6.sin6_port = htons(atoi(port_ptr + 1));
+		inet_pton(AF_INET, _domain, &sin_addr);
+		snprintf(_domain, sizeof(_domain), "::ffff:%s", inet_ntoa(sin_addr));
+	}
 
-            ll_addr.in.sin_family = AF_INET;
-            ll_addr.in.sin_addr.s_addr = inet_addr(_domain);
-	    set_tcp_mss_by_mtu(1500 - 20 - adjust);
-        }
+	inet_pton(AF_INET6, _domain + (*_domain == '['), &ll_addr.in6.sin6_addr);
+	set_tcp_mss_by_mtu(1500 - 40 - adjust);
 
 	return 0;
 }
@@ -519,9 +511,7 @@ static int vpn_jni_get_pendingfds(JNIEnv *env, jclass clazz, jint which, jintArr
 static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 {
 	int link_failure;
-#if 0
 	int dnsfd = _dns_fd;
-#endif
 	int netfd = _link_fd;
 	struct low_link_ops *link_ops = _link_ops[which];
 
@@ -532,13 +522,11 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		add_pending_fd(netfd);
 		_link_fd = netfd;
 
-#if 0
 		dnsfd = udp_ops.create();
 		assert (dnsfd != -1);
 		bind_any_address(dnsfd);
 		add_pending_fd(dnsfd);
 		_dns_fd = dnsfd;
-#endif
 	}
 
 	if (_alength > 0) {
@@ -546,10 +534,10 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 	}
 
 	_linkfailure = 0;
-	link_failure = vpn_run_loop(tunfd, netfd, /* dnsfd,*/ link_ops);
+	link_failure = vpn_run_loop(tunfd, netfd, dnsfd, link_ops);
 	if (link_failure == -1
 			&& _disconnected == 0) {
-		// close(dnsfd);
+		close(dnsfd);
 		close(netfd);
 		netfd = link_ops->create();
 		assert (netfd != -1);
@@ -557,13 +545,11 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		add_pending_fd(netfd);
 		_link_fd = netfd;
 
-#if 0
 		dnsfd = udp_ops.create();
 		assert (dnsfd != -1);
 		bind_any_address(dnsfd);
 		add_pending_fd(dnsfd);
 		_dns_fd = dnsfd;
-#endif
 	}
 
 	if (_alength > 0) {
@@ -579,6 +565,7 @@ static JNINativeMethod methods[] = {
 	{"vpn_alloc", "(I)I", (void*)vpn_jni_alloc},
 
 	{"vpn_set_server", "(ILjava/lang/String;)I", (void*)vpn_jni_set_server},
+	{"vpn_set_dns_shell", "(Ljava/lang/String;)I", (void*)vpn_jni_set_dns_shell},
 	{"vpn_set_lostlink", "(I)I", (void*)vpn_jni_set_lostlink},
 	{"vpn_set_disconnect", "(I)I", (void*)vpn_jni_set_disconnect},
 

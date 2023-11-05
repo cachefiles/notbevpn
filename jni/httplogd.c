@@ -23,6 +23,18 @@
 
 #define MAX(a, b) ((a) < (b)? (b): (a))
 
+#define _family AF_INET
+
+#if _family == AF_INET
+#define INET_TYPE(f) f##_in
+#define INET_FIELD(v, f) v.sin_##f
+#endif
+
+#if _family == AF_INET6
+#define INET_TYPE(f) f##_in6
+#define INET_FIELD(v, f) v.sin6_##f
+#endif
+
 const char http_response[] = 
 "HTTP/1.1 200 OK\r\n"
 "Server: bfe/1.0.8.18\r\n"
@@ -78,7 +90,7 @@ int main(int argc, char *argv[])
 	int i;
 	int fd, error;
 	int nfd = 0, fds[MAX_LISTEN];
-	struct sockaddr_in lladdr = {};
+	struct INET_TYPE(sockaddr) lladdr;
 
 	signal(SIGPIPE, SIG_IGN);
 	for (i = 1; i < argc; i++) {
@@ -96,11 +108,11 @@ int main(int argc, char *argv[])
 			int port = atoi(argv[++i]);
 			assert (port > 1024 && port < 65536);
 
-			fd = socket(AF_INET, SOCK_STREAM, 0);
+			fd = socket(_family, SOCK_STREAM, 0);
 			assert(fd != -1);
 
-			lladdr.sin_family = AF_INET;
-			lladdr.sin_port   = htons(port);
+			INET_FIELD(lladdr, family) = _family;
+			INET_FIELD(lladdr, port)   = htons(port);
 			error = bind(fd, (struct sockaddr *)&lladdr, sizeof(lladdr));
 			assert(error == 0);
 
