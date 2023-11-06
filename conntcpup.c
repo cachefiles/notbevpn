@@ -57,6 +57,9 @@ static u_char type_len_map[8] = {0x0, 0x04, 0x0, 0x0, 0x10};
 #define RELAY_IPV4 0x01
 #define RELAY_IPV6 0x04
 
+int inet_4to6(void *dst, const void *src);
+int inet_6to4(void *dst, const void *src);
+
 static int set_relay_info(u_char *target, int type, void *host, u_short port)
 {      
 	int len;
@@ -542,8 +545,21 @@ size_t ipv6_hdr_setbuf(void *buf, int proto, size_t total, tcp_state_t *st)
 	return 0;
 }
 
+// nat64 patten 64::ff9b:0.0.0.0
+static uint8_t _nat64_patten[16] = {0, 0x64, 0xff, 0x9b, 0, 0, 0, 0};
+// ipv4 patten ::ffff:0.0.0.0
+static uint8_t _ipv4_patten[16]  = { [10] = 0xff, [11] = 0xff };
+
 static size_t ipv6_set_relay(void *buf, tcp_state_t *st)
 {
+	uint8_t v4map_addr[16];
+
+	if (memcmp(&st->ip6_dst, _nat64_patten, 12) == 0) {
+		memcpy(v4map_addr, &st->ip6_dst, 16);
+		memcpy(v4map_addr, _ipv4_patten, 12);
+		return set_relay_info(buf, RELAY_IPV6, v4map_addr, st->th_dport);
+	}
+
 	return set_relay_info(buf, RELAY_IPV6, &st->ip6_dst, st->th_dport);
 }
 

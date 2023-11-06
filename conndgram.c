@@ -597,6 +597,9 @@ static int handle_client_to_server_v4(nat_conntrack_t *conn, nat_conntrack_ops *
 	return sizeof(*up) + count + sizeof(_proto_tag);
 }
 
+// nat64 patten 64:ff9b::0.0.0.0
+static uint8_t _nat64_patten[16] = {0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
 static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *ops, nat_udphdr_t *uh, uint8_t *packet, size_t len, uint8_t *buf, size_t limit)
 {
 	const uint8_t *data_start = NULL;
@@ -620,10 +623,18 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 		up->uh_tag  = TAG_DST_IPV6;
 		up->uh_dport = uh->uh_dport;
 		memcpy(up->uh_daddr, &ip->ip6_dst, 16);
+		if (0 == memcmp(&ip->ip6_dst, _nat64_patten, 12)) {
+			up->uh_daddr[0] = up->uh_daddr[1] = 0;
+			up->uh_daddr[2] = htonl(0xffff);
+		}
 	} else {
 		up->uh_tag  = TAG_SRC_IPV6;
 		up->uh_dport = uh->uh_sport;
 		memcpy(up->uh_daddr, &ip->ip6_src, 16);
+		if (0 == memcmp(&ip->ip6_src, _nat64_patten, 12)) {
+			up->uh_daddr[0] = up->uh_daddr[1] = 0;
+			up->uh_daddr[2] = htonl(0xffff);
+		}
 	}
 	
 	data_start = (uint8_t *)(uh + 1);
@@ -635,6 +646,17 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 	conn->s.ttl ++;
 
 	return sizeof(*up) + count + sizeof(_proto_tag);
+}
+
+static const uint8_t _v4map_patten[16] = {[10] = 0xff, [11] = 0xff};
+static void nat64_update(void *ipv6)
+{
+	uint8_t *ptr = (uint8_t *)ipv6;
+
+	if (0 == memcmp(ptr, _v4map_patten, 12))
+		memcpy(ptr, _nat64_patten, 12);
+
+	return;
 }
 
 static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
@@ -661,6 +683,7 @@ static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 				assert(optlen >= 20 && optp[1] == 20);
 				memcpy(&conn->c.th_sport, optp + 2, sizeof(conn->c.th_sport));
 				memcpy(&conn->c.ip6_src, optp + 4, sizeof(conn->c.ip6_src));
+				nat64_update(&conn->c.ip6_src);
 				is_ipv6 = 1;
 				break;
 
@@ -678,6 +701,7 @@ static int update_conntrack(nat_conntrack_t *conn, void *buf, size_t len)
 				assert(optlen >= 20 && optp[1] == 20);
 				memcpy(&conn->c.th_dport, optp + 2, sizeof(conn->c.th_dport));
 				memcpy(&conn->c.ip6_dst, optp + 4, sizeof(conn->c.ip6_dst));
+				nat64_update(&conn->c.ip6_dst);
 				is_ipv6 = 1;
 				break;
 
