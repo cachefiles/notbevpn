@@ -347,7 +347,9 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest
 {
 	int i;
 	int error;
+	int dupout = 0;
 	int flags = 0;
+	int oldlen = len;
 	char sndbuf[2048];
 
 	struct dns_parser parser;
@@ -364,9 +366,11 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest
 		que = &pp->question[i];
 		assert(que->domain);
 
-		if (que->type != NSTYPE_AAAA) {
+		if (que->type != NSTYPE_AAAA && que->type != NSTYPE_A) {
 			continue;
 		}
+
+		dupout = (NSTYPE_A == que->type);
 
 		if (getenv("REFUSED_AAAA")) {
 			continue;
@@ -407,6 +411,8 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest
 
 	resolv_record(parser.head.ident, from, &_save_addr, flags);
 	error = sendto(dnsfd, sndbuf, len, 0, (struct sockaddr *)dest, sizeof(*dest));
+	if (dupout) 
+		error = sendto(dnsfd, packet, oldlen, 0, (struct sockaddr *)dest, sizeof(*dest));
 	return error;
 }
 
@@ -552,17 +558,25 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in6 *fr
 	for (i = 0; i < parser.head.question; i++) {
 		que = &pp->question[i];
 		
-		if (que->type != NSTYPE_AAAA || strlen(que->domain) < LENOFEXT || !(flags & 2)) {
+		if (strlen(que->domain) < LENOFEXT || !(flags & 2)) {
 			LOG_DEBUG("ignore: %d %s %d %d", que->type, que->domain, strlen(que->domain), LENOFEXT);
 			continue;
 		}
 
-		origin = domain_unwrap(&parser, que->domain);
-		if (origin == que->domain) {
+		const char *domain = domain_unwrap(&parser, que->domain);
+		if (domain == que->domain) {
 			origin = NULL;
-		} else if (origin) {
-			que->domain = origin;
+		} else if (domain) {
+			origin = que->domain;
+			que->domain = domain;
 		}
+	}
+
+	assert(que);
+	if (origin == NULL && 
+			que->type == NSTYPE_A && parser.head.answer == 1) {
+		parser.head.answer = 0;
+		return 0;
 	}
 
 	int nanswer = 0;
