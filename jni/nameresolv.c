@@ -576,7 +576,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in6 *fr
 	if (origin == NULL && 
 			que->type == NSTYPE_A && parser.head.answer == 1) {
 		parser.head.answer = 0;
-		return 0;
+		return -1;
 	}
 
 	int nanswer = 0;

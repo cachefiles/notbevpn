@@ -39,11 +39,14 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 	unsigned short key = 0;
 	char _plain_stream[2048], *packet;
 
-	int count = recvfrom(devfd, _plain_stream, sizeof(_plain_stream), MSG_DONTWAIT, ll_addr, ll_len);
+	struct sockaddr_in daddr = {};
+	size_t alen = sizeof(daddr);
+
+	int count = recvfrom(devfd, _plain_stream, sizeof(_plain_stream), MSG_DONTWAIT, &daddr, &alen);
 
 	if (count <= 0) return count;
 	if (count <= IPHDR_SKIP_LEN) return -1;
-	LOG_VERBOSE("icmp_low_link_recv_data: %d\n", count);
+	LOG_VERBOSE("icmp_low_link_recv_data: %d %d\n", count, len);
 
 	packet = _plain_stream + IPHDR_SKIP_LEN;
 	count -= IPHDR_SKIP_LEN;
@@ -61,6 +64,17 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 	count = MIN(count, len);
 	packet_decrypt(htons(key), buf, packet + sizeof(*hdr), count);
 
+	char *in6p;
+	struct sockaddr_in6 *inp6 = (struct sockaddr_in6 *)ll_addr;
+	inp6->sin6_family = AF_INET6;
+	inp6->sin6_port   = 0;
+	inp6->sin6_addr   = in6addr_any;
+
+	in6p = (char *)&inp6->sin6_addr;
+	memcpy(in6p + 12, &daddr.sin_addr, 4);
+	in6p[10] = in6p[11] = 0xff;
+	*ll_len = sizeof(*inp6);
+
 	return count;
 }
 
@@ -70,6 +84,15 @@ static int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struc
 {
 	unsigned short key = rand();
 	struct icmphdr *hdr = NULL;
+
+	const char *in6p;
+	struct sockaddr_in daddr = {};
+	daddr.sin_family = AF_INET;
+	daddr.sin_port   = 0;
+
+	struct sockaddr_in6 *inp6 = (struct sockaddr_in6 *)ll_addr;
+	in6p = (const char *)&inp6->sin6_addr;
+	memcpy(&daddr.sin_addr, in6p + 12, 4);
 
 	uint8_t _crypt_stream[MAX_PACKET_SIZE];
 
@@ -88,7 +111,9 @@ static int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struc
 	hdr->checksum = ip_checksum(_crypt_stream, len + sizeof(*hdr));
 
 	protect_reset(IPPROTO_ICMP, _crypt_stream, len, ll_addr, ll_len);
-	return sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in)));
+	int iretval =  sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, &daddr, sizeof(struct sockaddr_in));
+	assert(iretval > 0);
+	return iretval; 
 }
 
 static int icmp_low_link_create(void)

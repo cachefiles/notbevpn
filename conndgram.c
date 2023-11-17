@@ -623,7 +623,7 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 		up->uh_tag  = TAG_DST_IPV6;
 		up->uh_dport = uh->uh_dport;
 		memcpy(up->uh_daddr, &ip->ip6_dst, 16);
-		if (0 == memcmp(&ip->ip6_dst, _nat64_patten, 12)) {
+		if (0 == memcmp(&up->uh_daddr, _nat64_patten, 12)) {
 			up->uh_daddr[0] = up->uh_daddr[1] = 0;
 			up->uh_daddr[2] = htonl(0xffff);
 		}
@@ -631,7 +631,7 @@ static int handle_client_to_server_v6(nat_conntrack_t *conn, nat_conntrack_ops *
 		up->uh_tag  = TAG_SRC_IPV6;
 		up->uh_dport = uh->uh_sport;
 		memcpy(up->uh_daddr, &ip->ip6_src, 16);
-		if (0 == memcmp(&ip->ip6_src, _nat64_patten, 12)) {
+		if (0 == memcmp(&up->uh_daddr, _nat64_patten, 12)) {
 			up->uh_daddr[0] = up->uh_daddr[1] = 0;
 			up->uh_daddr[2] = htonl(0xffff);
 		}
