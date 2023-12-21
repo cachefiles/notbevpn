@@ -112,7 +112,8 @@ static int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struc
 
 	protect_reset(IPPROTO_ICMP, _crypt_stream, len, ll_addr, ll_len);
 	int iretval =  sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, &daddr, sizeof(struct sockaddr_in));
-	assert(iretval > 0);
+	LOG_VERBOSE("iretval=%d", iretval);
+	// assert(iretval > 0);
 	return iretval; 
 }
 

@@ -867,3 +867,83 @@ ssize_t udpip_frag_input(void *packet, size_t len, uint8_t *buf, size_t limit)
 	return 0;
 }
 
+struct packet_too_big {
+	uint8_t type;
+	uint8_t code;
+	uint16_t checksum;
+	uint32_t mtu;
+};
+
+int send_package_too_big(int tunfd, int _mtu, char *packet, size_t len)
+{
+	char icmp[1500];
+	struct packet_too_big *too = NULL;
+	nat_iphdr_t *ipd = (nat_iphdr_t *)icmp;
+	nat_ip6hdr_t *ipd6 = (nat_ip6hdr_t *)icmp;
+
+	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
+	nat_ip6hdr_t *ip6 = (nat_ip6hdr_t *)packet;
+
+	int fixed = 0;
+	int fulllen = 0;
+	int triplen = (len >> 1) & ~1;
+
+	if (ip->ip_v == VERSION_IPV4) {
+		ipd[0] = ip[0];
+		ipd->ip_src = ip->ip_dst;
+		ipd->ip_dst = ip->ip_src;
+		ipd->ip_p   = 1;
+
+		too = (struct packet_too_big *)(ipd + 1);
+		ipd->ip_len = htons(sizeof(*too) + triplen + sizeof(*ipd));
+		ipd->ip_sum = 0;
+		ipd->ip_sum = ip_checksum(ipd, sizeof(*ipd));
+
+		fulllen = sizeof(ipd[0]);
+		too->type = 3;
+		too->code = 4;
+		too->mtu = htonl(_mtu - 4);
+	} else if (ip->ip_v == VERSION_IPV6) {
+		ipd6[0] = ip6[0];
+		ipd6->ip6_src = ip6->ip6_dst;
+		ipd6->ip6_dst = ip6->ip6_src;
+		ipd6->ip6_nxt = 58;
+
+		too = (struct packet_too_big *)(ipd6 + 1);
+		ipd6->ip6_plen = htons(sizeof(*too) + triplen);
+		assert((triplen & 1) == 0);
+
+		char * suffixes = too + 1;
+		suffixes += triplen;
+
+		memcpy(suffixes, &ip6->ip6_src, 16);
+		suffixes += 16;
+
+		memcpy(suffixes, &ip6->ip6_dst, 16);
+		suffixes += 16;
+
+		uint16_t nxt = htons(58);
+		memcpy(suffixes, &nxt, sizeof(nxt));
+		suffixes += 2;
+
+		nxt = ipd6->ip6_plen;
+		memcpy(suffixes, &nxt, sizeof(nxt));
+		suffixes += 2;
+
+		fulllen = sizeof(ipd6[0]);
+		fixed = 36;
+		too->type = 2;
+		too->code = 0;
+		too->mtu = htonl(_mtu);
+	} else {
+		assert(0);
+	}
+
+	memcpy(too + 1, packet, triplen);
+
+	too->checksum = 0;
+	too->checksum = ip_checksum(too, triplen + sizeof(*too) + fixed);
+	write(tunfd, icmp, fulllen + sizeof(*too) + triplen);
+
+	return 0;
+}

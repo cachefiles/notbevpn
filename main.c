@@ -139,28 +139,33 @@ static void run_config_script(const char *ifname, const char *script, const char
 	return;
 }
 
+extern int rx_sum_drop;
+extern struct low_link_ops udp_ops;
+extern struct low_link_ops icmp_ops;
+
 int set_tcp_mss_by_mtu(int mtu);
 
+int set_dont_fragment(int sockfd)
+{
+#if defined(IP_DONTFRAG)
+	int val = 1;
+	return setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val));
+#endif
+
+#if defined(IP_MTU_DISCOVER)
+	int flags = IP_PMTUDISC_DO;
+	return setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &flags, sizeof(flags));
+#endif
+}
+
+static int dev_mtu = 0;
 int get_device_mtu(int sockfd, struct sockaddr *dest, socklen_t dlen, int def_mtu)
 {
 	int total = 0;
 
 	int sht = 2;
 	int mtu = def_mtu;
-	char buf[1024 * 4];
-	static int dev_mtu = 0;
-
-#if defined(IP_DONTFRAG)
-	int val = 1;
-	setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val));
-#endif
-
-#if defined(IP_MTU_DISCOVER)
-	int val = IP_PMTUDISC_DO;
-	setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &val, sizeof(val));
-#else
-	goto cleanup;
-#endif
+	char buf[1024 * 2];
 
 	if (dev_mtu > 0) {
 		return dev_mtu;
@@ -204,23 +209,53 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjus
 {
 	int err = 0;
 	int mtu = 1500;
-	int udpfd = socket(AF_INET6, SOCK_DGRAM, 0);
+	uint32_t *v6addr = NULL;
+	struct sockaddr_in local4, remote4;
 
-	if (udpfd != -1) {
-		err = bind(udpfd, local, sizeof(struct sockaddr_in6));
-		assert(err == 0);
-
-		mtu = get_device_mtu(udpfd, remote, sizeof(struct sockaddr_in6), 1500);
-		close(udpfd);
+	struct sockaddr_in6 *in6p = remote;
+	if (!IN6_IS_ADDR_V4MAPPED(&in6p->sin6_addr)) {
+		return mtu;
 	}
+
+	int udpfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	if (udpfd == -1) {
+		return mtu;
+	}
+
+	remote4.sin_port = in6p->sin6_port;
+	remote4.sin_family = AF_INET;
+	v6addr = &in6p->sin6_addr;
+	memcpy(&remote4.sin_addr, v6addr + 3, 4);
+
+	in6p = local;
+	local4.sin_port = in6p->sin6_port;
+	local4.sin_family = AF_INET;
+	v6addr = &in6p->sin6_addr;
+	memcpy(&local4.sin_addr, v6addr + 3, 4);
+
+	err = bind(udpfd, &local4, sizeof(local4));
+	assert(err == 0);
+
+	if (set_dont_fragment(udpfd)) {
+		set_tcp_mss_by_mtu(1400 - 20 - adjust);
+		return;
+	}
+
+	mtu = get_device_mtu(udpfd, &remote4, sizeof(remote4), 1500);
+	LOG_DEBUG("device mtu=%d %s", mtu, ntop6(&in6p->sin6_addr));
+
+	usleep(200000);
+
+	dev_mtu = 0;
+	mtu = get_device_mtu(udpfd, &remote4, sizeof(remote4), 1500);
+	close(udpfd);
+
+	LOG_DEBUG("path mtu=%d %s", mtu, ntop6(&in6p->sin6_addr));
 
 	set_tcp_mss_by_mtu(mtu - 20 - adjust);
 	return 0;
 }
-
-extern int rx_sum_drop;
-extern struct low_link_ops udp_ops;
-extern struct low_link_ops icmp_ops;
 
 ssize_t tcp_frag_nat(void *packet, size_t len, size_t limit);
 void tcp_nat_init(struct sockaddr_in6 *ifaddr, struct sockaddr_in6 *target);
@@ -283,6 +318,8 @@ static void bind_to_device(int sockfd, const char *iface)
 
 	return;
 }
+
+int send_package_too_big(int tunfd, int _mtu, char *packet, size_t len);
 
 int main(int argc, char *argv[])
 {
@@ -385,6 +422,7 @@ int main(int argc, char *argv[])
 
 	netfd = (*link_ops->create)();
 	assert(netfd != -1);
+	set_dont_fragment(netfd);
 
 	dnsfd = (*udp_ops.create)();
 	assert(dnsfd != -1);
@@ -460,9 +498,10 @@ int main(int argc, char *argv[])
 					if (_reload && (newfd = (*link_ops->create)()) != -1) {
 						close(netfd);
 						netfd = newfd;
+						set_dont_fragment(netfd);
 						bind_to_device(netfd, iface);
 						if (rx_sum_drop > 5) { rx_sum_drop = 0; so_addr.sin6_port = 0; }
-						if (bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
+						if (link_ops == &icmp_ops || bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
 							setblockopt(netfd, 0);
 							nready = _reload = 0;
 						} else {
@@ -524,6 +563,12 @@ int main(int argc, char *argv[])
 				continue;
 			}
 
+			int adjust_mtu = (*link_ops->get_adjust)();
+			if (len + adjust_mtu > new_dev_mtu && new_dev_mtu > 0) {
+				send_package_too_big(tunfd, new_dev_mtu - adjust_mtu - 40, packet, len);
+				continue;
+			}
+
 			int ignore = 0;
 			if (check_blocked_normal(tunfd, dnsfd, packet, len, &ignore)) {
 				LOG_VERBOSE("ignore blocked data\n");
@@ -554,7 +599,7 @@ int main(int argc, char *argv[])
 			bug_check++;
 
 			LOG_VERBOSE("receive dns data\n");
-			len = recvfrom(dnsfd, packet, bufsize, 0, SOT(&tmp_addr), &tmp_alen); 
+			len = recvfrom(dnsfd, packet, bufsize, MSG_DONTWAIT, SOT(&tmp_addr), &tmp_alen); 
 			if (len < 0) {
 				FD_CLR(dnsfd, &readfds);
 				nready--;
