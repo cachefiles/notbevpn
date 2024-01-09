@@ -395,7 +395,7 @@ static nat_conntrack_ops ip_conntrack_ops = {
 };
 
 static time_t _ipv6_gc_time = 0;
-static nat_conntrack_t * _ipv6_last[HASH_MASK] = {};
+static nat_conntrack_t * _ipv6_last[HASH_MASK + 1] = {};
 struct nat_conntrack_q _ipv6_header = LIST_HEAD_INITIALIZER(_ipv6_header);
 
 static nat_conntrack_t * lookup_ipv6(uint8_t *packet, uint16_t sport, uint16_t dport)

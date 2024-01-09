@@ -90,6 +90,70 @@ static int is_blocked(int tunfd, char *packet, size_t len, int *failure)
 	return 0;
 }
 
+int set_tcp_mss_by_mtu(int mtu);
+
+int set_dont_fragment(int sockfd)
+{
+#if defined(IP_DONTFRAG)
+        int val = 1;
+        return setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val));
+#endif
+
+#if defined(IP_MTU_DISCOVER)
+        int flags = IP_PMTUDISC_DO;
+        return setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &flags, sizeof(flags));
+#endif
+}
+
+static int dev_mtu = 0;
+int get_device_mtu(int sockfd, struct sockaddr *dest, socklen_t dlen, int def_mtu)
+{
+        int total = 0;
+
+        int sht = 2;
+        int mtu = def_mtu;
+        char buf[1024 * 2];
+
+        if (dev_mtu > 0) {
+                return dev_mtu;
+        }
+
+        while (mtu > 512) {
+                int save_mtu = mtu;
+                for (sht = 2; mtu > (1 << sht); sht++) {
+                        int error  = sendto(sockfd, buf, mtu - 28, 0, dest, dlen);
+                        if (error > 0) {
+                                total += error;
+                                goto next;
+                        } else if (errno == EMSGSIZE) {
+                                save_mtu = mtu;
+                                mtu -= (1 << sht);
+                        } else {
+                                goto cleanup;
+                        }
+                }
+                mtu = save_mtu;
+        }
+
+next:
+        for (; sht >= 2 && mtu > 512; sht--) {
+                int mid  = mtu + (1 << sht);
+                int error  = sendto(sockfd, buf, mid - 28, 0, dest, dlen);
+                if (error > 0) {
+                        total += error;
+                        mtu = mid;
+                } else if (errno != EMSGSIZE) {
+                        goto cleanup;
+                }
+        }
+
+        dev_mtu = mtu;
+cleanup:
+        return mtu;
+}
+
+static int new_dev_mtu = 1500;
+int send_package_too_big(int tunfd, int _mtu, char *packet, size_t len);
 static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *link_ops)
 {
 	int len;
@@ -203,6 +267,12 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 				nready--;
 				continue;
 			}
+
+                        int adjust_mtu = (*link_ops->get_adjust)();
+                        if (len + adjust_mtu > new_dev_mtu && new_dev_mtu > 0) {
+                            send_package_too_big(tunfd, new_dev_mtu - adjust_mtu - 40, packet, len);
+                            continue;
+                        }
 
 			_total_tx_pkt++;
 			_total_tx_bytes += len;
@@ -532,6 +602,17 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 	if (_alength > 0) {
 		return 1;
 	}
+
+	struct sockaddr_in remote4;
+	remote4.sin_family = AF_INET;
+	remote4.sin_port   = htons(53);
+	inet_pton(AF_INET, "100.0.0.1", &remote4.sin_addr);
+	set_dont_fragment(dnsfd);
+	int mtu = get_device_mtu(dnsfd, (struct sockaddr *)&remote4, sizeof(remote4), 1500);
+	usleep(60000);
+	new_dev_mtu = get_device_mtu(dnsfd, (struct sockaddr *)&remote4, sizeof(remote4), 1500);
+	LOG_DEBUG("device mtu=%d", mtu);
+	set_tcp_mss_by_mtu(new_dev_mtu - 40 - link_ops->get_adjust());
 
 	_linkfailure = 0;
 	link_failure = vpn_run_loop(tunfd, netfd, dnsfd, link_ops);
