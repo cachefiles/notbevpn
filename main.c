@@ -246,7 +246,7 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjus
 	mtu = get_device_mtu(udpfd, &remote4, sizeof(remote4), 1500);
 	LOG_DEBUG("device mtu=%d %s", mtu, ntop6(&in6p->sin6_addr));
 
-	usleep(200000);
+	usleep(60000);
 
 	dev_mtu = 0;
 	mtu = get_device_mtu(udpfd, &remote4, sizeof(remote4), 1500);

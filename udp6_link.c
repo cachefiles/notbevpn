@@ -66,6 +66,7 @@ static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct socka
 
 static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct sockaddr *ll_addr, size_t ll_len)
 {
+	int err = 0;
 	unsigned short key = rand();
 	uint8_t _crypt_stream[MAX_PACKET_SIZE];
 
@@ -84,7 +85,10 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 	}
 
 	protect_reset(IPPROTO_UDP, _crypt_stream, len, ll_addr, ll_len);
-	return sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in6)));
+	err = sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in6)));
+	fix_path_mtu(err, devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in6)));
+
+	return err;
 }
 
 static int udp_low_link_adjust(void)
