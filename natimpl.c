@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdint.h>
+#include <config.h>
 
 #include "natimpl.h"
 
@@ -164,4 +165,28 @@ int nat_delete(int a, int b)
 	}
 
 	return 0;
+}
+
+static int _nat64_on = 0;
+static uint8_t _nat64_patten[16] = {0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static uint8_t _v4mapped_patten[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0};
+
+int nat64_prefix_set(const char *prefix)
+{
+        inet_pton(AF_INET6, prefix, &_nat64_patten);
+	_nat64_on = !!memcmp(_v4mapped_patten, _nat64_patten, 16);
+        return 0;
+}
+
+int nat64_prefix_update(void *addr, int type)
+{
+	if (_nat64_on == 0) {
+		/* do nothing since nat64 is off */
+	} else if (memcmp(_nat64_patten, addr, 12) == 0 && type == NAT64_DST) {
+		memcpy(addr, _v4mapped_patten, 12);
+	} else if (memcmp(_v4mapped_patten, addr, 12) == 0 && type == NAT64_SRC) {
+		memcpy(addr, _nat64_patten, 12);
+	}
+
+        return 0;
 }

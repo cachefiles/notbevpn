@@ -545,22 +545,14 @@ size_t ipv6_hdr_setbuf(void *buf, int proto, size_t total, tcp_state_t *st)
 	return 0;
 }
 
-// nat64 patten 64::ff9b:0.0.0.0
-static uint8_t _nat64_patten[16] = {0, 0x64, 0xff, 0x9b, 0, 0, 0, 0};
-// ipv4 patten ::ffff:0.0.0.0
-static uint8_t _ipv4_patten[16]  = { [10] = 0xff, [11] = 0xff };
-
 static size_t ipv6_set_relay(void *buf, tcp_state_t *st)
 {
 	uint8_t v4map_addr[16];
 
-	if (memcmp(&st->ip6_dst, _nat64_patten, 12) == 0) {
-		memcpy(v4map_addr, &st->ip6_dst, 16);
-		memcpy(v4map_addr, _ipv4_patten, 12);
-		return set_relay_info(buf, RELAY_IPV6, v4map_addr, st->th_dport);
-	}
-
-	return set_relay_info(buf, RELAY_IPV6, &st->ip6_dst, st->th_dport);
+        memcpy(v4map_addr, &st->ip6_dst, 16);
+        NAT64_PREFIX_UPDATE(v4map_addr, NAT64_DST);
+        
+        return set_relay_info(buf, RELAY_IPV6, v4map_addr, st->th_dport);
 }
 
 static nat_conntrack_ops ip6_conntrack_ops = {

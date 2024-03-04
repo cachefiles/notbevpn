@@ -462,6 +462,26 @@ static int vpn_jni_set_lostlink(JNIEnv *env, jclass clazz, jint which)
 	return 0;
 }
 
+static int vpn_jni_run_cmd_shell(JNIEnv *env, jclass clazz, jstring shell)
+{
+	char _cmdbuf[1024] = {};
+	const char *cmd = (*env)->GetStringUTFChars(env, shell, 0);
+
+	strncpy(_cmdbuf, cmd, sizeof(_cmdbuf) -1);
+
+	(*env)->ReleaseStringUTFChars(env, shell, cmd);
+
+        const char *pcmd = cmd;
+        while (*pcmd == ' ') pcmd++;
+
+        if (strncmp(pcmd, "set nat64_prefix=", 17) == 0) {
+             const char *arg = pcmd + 17;
+             nat64_prefix_set(arg);
+        }
+
+        return 0;
+}
+
 static int vpn_jni_set_dns_shell(JNIEnv *env, jclass clazz, jstring server)
 {
 	char dummy[16], envb[256];
@@ -647,6 +667,7 @@ static JNINativeMethod methods[] = {
 
 	{"vpn_set_server", "(ILjava/lang/String;)I", (void*)vpn_jni_set_server},
 	{"vpn_set_dns_shell", "(Ljava/lang/String;)I", (void*)vpn_jni_set_dns_shell},
+	{"vpn_run_cmd_shell", "(Ljava/lang/String;)I", (void*)vpn_jni_run_cmd_shell},
 	{"vpn_set_lostlink", "(I)I", (void*)vpn_jni_set_lostlink},
 	{"vpn_set_disconnect", "(I)I", (void*)vpn_jni_set_disconnect},
 
