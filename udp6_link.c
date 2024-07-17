@@ -6,6 +6,9 @@
 #include <ctype.h>
 #include <time.h>
 #include <signal.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
 
 #include <config.h>
 #include <base_link.h>
@@ -86,7 +89,7 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 
 	protect_reset(IPPROTO_UDP, _crypt_stream, len, ll_addr, ll_len);
 	err = sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in6)));
-	fix_path_mtu(err, devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in6)));
+	// fix_path_mtu(err, devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in6)));
 
 	return err;
 }
