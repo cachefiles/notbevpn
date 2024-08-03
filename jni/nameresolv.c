@@ -232,7 +232,7 @@ static const char *domain_unwrap(struct dns_parser *p1, const char *domain)
 	dots[ndot & 0x7] = title;
 
 	limit = title + sizeof(title);
-	for (iter; *iter; iter++) {
+	for (; *iter; iter++) {
 		switch(*iter) {
 			case '.':
 				if (optp > dots[ndot & 0x7]) ndot++;
@@ -358,7 +358,7 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest
 	struct dns_parser *pp = dns_parse(&parser, (uint8_t *)packet, len);
 
 	if (NULL ==  pp) {
-		LOG_VERBOSE("resolv_invoke, parse failue");
+		LOG_DEBUG("resolv_invoke, parse failue");
 		return -1;
 	}
 
@@ -370,6 +370,9 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest
 			continue;
 		}
 
+		if (NSTYPE_A != que->type) return -100;
+
+#if 0
 		dupout = (NSTYPE_A == que->type);
 
 		if (getenv("REFUSED_AAAA")) {
@@ -382,6 +385,7 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest
 			que->domain = domain_rewrap(pp, que->domain);
 			flags = (origin != que->domain) << 1;
 		}
+#endif
 	}
 
 	len = dns_build(&parser, (uint8_t *)sndbuf, sizeof(sndbuf));
@@ -394,11 +398,11 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest
 #ifdef __ANDROID__
 	_save_addr = *dest;
 	// flags = get_dns_addr(dest, tethering);
-	inet_pton(AF_INET6, getenv("NAMESERVER"), &dest->sin6_addr);
+	// inet_pton(AF_INET6, getenv("NAMESERVER"), &dest->sin6_addr);
 	flags |= 1;
 #else
 	_save_addr = *dest;
-	inet_pton(AF_INET6, getenv("NAMESERVER"), &dest->sin6_addr);
+	// inet_pton(AF_INET6, getenv("NAMESERVER"), &dest->sin6_addr);
 	flags |= 1;
 #ifdef SO_BINDTODEVICE
 	if (get_dns_server(dest))
@@ -410,26 +414,33 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest
 #endif
 
 	resolv_record(parser.head.ident, from, &_save_addr, flags);
+
+#if 0
 	error = sendto(dnsfd, sndbuf, len, 0, (struct sockaddr *)dest, sizeof(*dest));
 	if (dupout) 
-		error = sendto(dnsfd, packet, oldlen, 0, (struct sockaddr *)dest, sizeof(*dest));
+#endif
+	uint8_t * convert = (uint8_t *)&dest->sin6_addr;
+	uint8_t   nat64_magic[16] = {0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 127, 9, 9, 9};
+
+	if (memcmp(nat64_magic, convert, 16) == 0 && getenv("NAMESERVER")) {
+		inet_pton(AF_INET6, getenv("NAMESERVER"), convert);
+	} else if (memcmp(nat64_magic, convert, 12) == 0) {
+		memset(convert, 0, 10);
+		memset(convert + 10, 0xff, 2);
+	}
+
+	error = sendto(dnsfd, packet, oldlen, 0, (struct sockaddr *)dest, sizeof(*dest));
 	return error;
 }
 
-static int ip4_mktpl(nat_iphdr_t *ip, struct sockaddr_in6 *from, struct sockaddr_in6 *dest, size_t len)
+static int ip6_mktpl(nat_ip6hdr_t *ip, struct sockaddr_in6 *from, struct sockaddr_in6 *dest, size_t len)
 {
-	unsigned char tmp[] = {
-		0x45, 0x00, 0x00, 0x50, 0x3e, 0x65, 0x00, 0x00,
-		0x32, 0x11, 0x8c, 0x27, 0xd3, 0x90, 0x0a, 0x6a,
-		0xca, 0x05, 0x16, 0x11
-	};
-
-	memcpy(ip, tmp, sizeof(*ip));
-	inet_6to4(&ip->ip_src, &from->sin6_addr);
-	inet_6to4(&ip->ip_dst, &dest->sin6_addr);
-	ip->ip_len = htons(len + 8 + 20);
-	ip->ip_sum = 0;
-	ip->ip_sum = ip_checksum(ip, sizeof(*ip));
+    ip->ip6_hlim = 64;
+    ip->ip6_flow = htonl(0x60000000);
+    ip->ip6_nxt  = IPPROTO_UDP;
+	ip->ip6_src  = from->sin6_addr;
+	ip->ip6_dst  = dest->sin6_addr;
+	ip->ip6_plen = htons(len + 8);
 
 	return 0;
 }
@@ -450,82 +461,6 @@ static int udp_mktpl(nat_udphdr_t *uh, struct sockaddr_in6 *from, struct sockadd
     uh->uh_sum = udp_checksum(ip_sum, uh, sizeof(*uh) + len);
 	return 0;
 }
-
-#if defined(__ANDROID__) || defined(WIN32)
-static int add_dns_route(const uint8_t *dest)
-{
-	LOG_DEBUG("not supported");
-	return 0;
-}
-
-static int free_dns_route(void)
-{
-	return 0;
-}
-#else
-
-static int _pending_count = 0;
-static int _pending_route[512];
-static pid_t _add_route_proc = -1;
-
-static int free_dns_route(void)
-{
-	int exitcode = 0;
-
-	if (_add_route_proc != -1 &&
-			waitpid(_add_route_proc, &exitcode,  WNOHANG) == _add_route_proc) {
-		_add_route_proc = -1;
-	}
-
-	return 0;
-}
-
-static int add_dns_route(const uint8_t *dest)
-{
-	int total;
-	int exitcode = 0;
-
-	total = _pending_count;
-	if (_add_route_proc != -1) {
-		if (waitpid(_add_route_proc, &exitcode,  WNOHANG) == _add_route_proc) {
-			_add_route_proc = -1;
-			// _pending_count = 0;
-		} else {
-			if (_pending_count < 512)
-				_pending_route[_pending_count++] = *(int *)dest;
-			LOG_VERBOSE("waitpid failure: %d\n", errno);
-			return 0;
-		}
-	}
-	LOG_DEBUG("add_dns_route: %x\n", dest[0]);
-
-	_add_route_proc = fork();
-	if (_add_route_proc > 0) {
-		_pending_count = 0;
-		return 0;
-	}
-
-	if (_add_route_proc == 0) {
-#if 1
-		int i;
-		char subnet[160];
-		snprintf(subnet, sizeof(subnet), "route add -net %d.%d.%d.0/24 -interface utun1", dest[0], dest[1], dest[2]);
-		LOG_DEBUG("cmd_0 %s\n", subnet);
-		system(subnet);
-
-		for (i = 0; i < _pending_count; i++) {
-			dest = (uint8_t *)&_pending_route[i];
-			snprintf(subnet, sizeof(subnet), "route add -net %d.%d.%d.0/24 -interface utun1", dest[0], dest[1], dest[2]);
-			LOG_DEBUG("cmd_1 %s\n", subnet);
-			system(subnet);
-		}
-#endif
-		exit(0);
-	}
-
-	return 0;
-}
-#endif
 
 
 struct dns_cname {
@@ -558,6 +493,7 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in6 *fr
 	for (i = 0; i < parser.head.question; i++) {
 		que = &pp->question[i];
 		
+#if 0
 		if (strlen(que->domain) < LENOFEXT || !(flags & 2)) {
 			LOG_DEBUG("ignore: %d %s %d %d", que->type, que->domain, strlen(que->domain), LENOFEXT);
 			continue;
@@ -570,8 +506,10 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in6 *fr
 			origin = que->domain;
 			que->domain = domain;
 		}
+#endif
 	}
 
+#if 0
 	assert(que);
 	if (origin == NULL && 
 			que->type == NSTYPE_A && parser.head.answer == 1) {
@@ -636,26 +574,30 @@ int resolv_return(int maxsize, char *packet, size_t len, struct sockaddr_in6 *fr
 		parser.head.author = 0;
 		parser.head.addon = 0;
 	}
+#endif
 
-	nat_iphdr_t *ip;
+	nat_ip6hdr_t *ip6;
 	nat_udphdr_t *uh;
 
-	ip = (nat_iphdr_t *)sndbuf;
-	uh = (nat_udphdr_t *)(ip + 1);
+	ip6 = (nat_ip6hdr_t *)sndbuf;
+	uh = (nat_udphdr_t *)(ip6 + 1);
 
-	len = dns_build(&parser, (uint8_t *)(uh + 1), sizeof(sndbuf) - sizeof(*uh) - sizeof(*ip));
+#if 0
+	len = dns_build(&parser, (uint8_t *)(uh + 1), sizeof(sndbuf) - sizeof(*uh) - sizeof(*ip6));
 	if (len <= 0) {
 		return -1;
 	}
+#endif
+	memcpy(uh + 1, packet, len);
 
-	ip4_mktpl(ip, from, dest, len);
+	ip6_mktpl(ip6, from, dest, len);
 	udp_mktpl(uh, from, dest, len);
-	if (len + sizeof(*uh) + sizeof(*ip) < maxsize) {
-		maxsize = len + sizeof(*uh) + sizeof(*ip);
-		memcpy(packet, ip, maxsize);
+
+	if (len + sizeof(*uh) + sizeof(*ip6) < maxsize) {
+		maxsize = len + sizeof(*uh) + sizeof(*ip6);
+		memcpy(packet, ip6, maxsize);
 		return maxsize;
 	}
 
-	free_dns_route();
 	return -1;
 }

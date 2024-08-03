@@ -268,11 +268,11 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 				continue;
 			}
 
-                        int adjust_mtu = (*link_ops->get_adjust)();
-                        if (len + adjust_mtu > new_dev_mtu && new_dev_mtu > 0) {
-                            send_package_too_big(tunfd, new_dev_mtu - adjust_mtu - 40, packet, len);
-                            continue;
-                        }
+			int adjust_mtu = (*link_ops->get_adjust)();
+			if (len + adjust_mtu > new_dev_mtu && new_dev_mtu > 0) {
+				send_package_too_big(tunfd, new_dev_mtu - adjust_mtu - 40, packet, len);
+				continue;
+			}
 
 			_total_tx_pkt++;
 			_total_tx_bytes += len;
@@ -474,8 +474,11 @@ static int vpn_jni_run_cmd_shell(JNIEnv *env, jclass clazz, jstring shell)
         const char *pcmd = cmd;
         while (*pcmd == ' ') pcmd++;
 
+	LOG_DEBUG("vpn_jni_run_cmd_shell: cmd=%s", cmd);
+	LOG_DEBUG("vpn_jni_run_cmd_shell: pcmd=%s", pcmd);
         if (strncmp(pcmd, "set nat64_prefix=", 17) == 0) {
              const char *arg = pcmd + 17;
+             LOG_DEBUG("vpn_jni_run_cmd_shell: prefix=%s", arg);
              nat64_prefix_set(arg);
         }
 

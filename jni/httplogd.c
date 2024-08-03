@@ -9,6 +9,10 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
+       #include <sys/types.h>
+       #include <sys/socket.h>
+       #include <netdb.h>
+
 #ifdef __ANDROID__
 #include <android/log.h>
 #define LOG_TAG "WalleyeService"
@@ -85,6 +89,48 @@ static void handle_connection(int lfd)
 	return;
 }
 
+
+static void dump_getaddrinfo(const char *mydomain)
+{
+    struct addrinfo hints;
+    struct addrinfo *result = NULL, *rp;
+    int sfd, s;
+    struct sockaddr_storage peer_addr;
+    socklen_t peer_addr_len;
+    ssize_t nread;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
+    hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
+    hints.ai_flags = 0;    /* For wildcard IP address */
+    hints.ai_protocol = 0;          /* Any protocol */
+    hints.ai_canonname = NULL;
+    hints.ai_addr = NULL;
+    hints.ai_next = NULL;
+
+
+    s = getaddrinfo(mydomain, "80", &hints, &result);
+    if (s != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+        return;
+    }
+
+    for (rp = result; rp != NULL; rp = rp->ai_next) {
+        char buf[123];
+        struct sockaddr_in6 *inp6 = (struct sockaddr_in6*)rp->ai_addr;
+        struct sockaddr_in  *inp4 = (struct sockaddr_in *)rp->ai_addr;
+        if (rp->ai_family == AF_INET6) {
+            fprintf(stderr, "getaddrinfo6: %s\n", inet_ntop(AF_INET6, &inp6->sin6_addr, buf, sizeof(buf)));
+        }
+        if (rp->ai_family == AF_INET) {
+            fprintf(stderr, "getaddrinfo4: %s\n", inet_ntop(AF_INET, &inp4->sin_addr, buf, sizeof(buf)));
+        }
+    }
+
+    freeaddrinfo(result);
+}
+
+
 int main(int argc, char *argv[])
 {
 	int i;
@@ -103,6 +149,9 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "\t [-b] run in background\n");
 			fprintf(stderr, "\t [-l <port>] listen the port, can be multi times \n");
 			fprintf(stderr, "\t\n");
+			exit(0);
+		} else if (strcmp(argv[i], "-t") == 0) {
+                        dump_getaddrinfo(i == argc? "www.google.com": argv[i + 1]);
 			exit(0);
 		} else if (i + 1 < argc && strcmp(argv[i], "-l") == 0) {
 			int port = atoi(argv[++i]);
