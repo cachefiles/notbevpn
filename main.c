@@ -9,6 +9,7 @@
 
 #include <config.h>
 #include <base_link.h>
+#include "natimpl.h"
 #include "conversation.h"
 
 #ifndef EMSGSIZE
@@ -352,6 +353,9 @@ int main(int argc, char *argv[])
 		} else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
 			fdb = argv[i + 1];
 			i++;
+		} else if (strcmp(argv[i], "--nat64-prefix") == 0 && i + 1 < argc) {
+			nat64_prefix_set(argv[i + 1]);
+			i++;
 		} else if (strcmp(argv[i], "-mtu") == 0 && i + 1 < argc) {
 			int mtu = atoi(argv[i + 1]);
 			if (mtu > 0 && mtu < 1500) new_dev_mtu = mtu;
@@ -500,7 +504,7 @@ int main(int argc, char *argv[])
 						netfd = newfd;
 						set_dont_fragment(netfd);
 						bind_to_device(netfd, iface);
-						if (rx_sum_drop > 5) { rx_sum_drop = 0; so_addr.sin6_port = 0; }
+						if (rx_sum_drop > 5 && have_target == 1) { rx_sum_drop = 0; so_addr.sin6_port = 0; }
 						if (link_ops == &icmp_ops || bind(newfd, SOT(&so_addr), sizeof(so_addr)) == 0) {
 							setblockopt(netfd, 0);
 							nready = _reload = 0;
@@ -533,6 +537,16 @@ int main(int argc, char *argv[])
 			}
 
 			if (len > 0) {
+#if 0
+				int prefix;
+				char ip[102], gw[102];
+				if (memcmp("HELO", packet, 4) == 0 &&
+						sscanf(packet, "HELO %[0-9.:]/%d via %s", ip, &prefix, gw) == 3) {
+					(*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
+					LOG_DEBUG("keepalive: %s\n", packet);
+					continue;
+				}
+#endif
 				len = tcpup_frag_input(packet, len, 1500);
 				if (len <= 0 && have_target == 2) ll_addr = tmp_addr;
 				ignore = (len <= 0)? 0: (*link_ops->send_data)(netfd, packet, len, SOT(&tmp_addr), tmp_alen);
