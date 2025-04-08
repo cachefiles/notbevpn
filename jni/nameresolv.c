@@ -354,6 +354,7 @@ int resolv_invoke(int dnsfd, char *packet, size_t len, struct sockaddr_in6 *dest
 
 	struct dns_parser parser;
 	struct dns_question *que;
+	if (NULL == getenv("NAMESERVER")) return -100;
 
 	struct dns_parser *pp = dns_parse(&parser, (uint8_t *)packet, len);
 

@@ -15,6 +15,7 @@
 #include <sys/select.h>
 
 #include <base_link.h>
+#include <natimpl.h>
 
 #define tun_write write
 #define tun_read  read
@@ -496,7 +497,9 @@ static int vpn_jni_set_dns_shell(JNIEnv *env, jclass clazz, jstring server)
 
 	(*env)->ReleaseStringUTFChars(env, server, domain);
 
-	if (strchr(_domain, ':') == NULL) {
+	if (strcasecmp(_domain, "none") == NULL) {
+		unsetenv("NAMESERVER");
+	} else if (strchr(_domain, ':') == NULL) {
 		if (inet_pton(AF_INET, _domain, &dummy)) {
 			snprintf(envb, sizeof(envb), "::ffff:%s", _domain);
 			setenv("NAMESERVER", envb, 1);
@@ -656,6 +659,7 @@ static int vpn_jni_loop_main(JNIEnv *env, jclass clazz, jint which, jint tunfd)
 		_dns_fd = dnsfd;
 	}
 
+	_lostlink = 0;
 	if (_alength > 0) {
 		return 1;
 	}
