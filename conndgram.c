@@ -893,7 +893,7 @@ int send_package_too_big(int tunfd, int _mtu, char *packet, size_t len)
 		ipd6->ip6_plen = htons(sizeof(*too) + triplen);
 		assert((triplen & 1) == 0);
 
-		char * suffixes = too + 1;
+		char * suffixes = (char *)(too + 1);
 		suffixes += triplen;
 
 		memcpy(suffixes, &ip6->ip6_src, 16);

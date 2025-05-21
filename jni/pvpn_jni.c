@@ -60,7 +60,7 @@ static int _total_tx_bytes = 0;
 static int _total_rx_pkt = 0;
 static int _total_rx_bytes = 0;
 
-extern struct low_link_ops udp_ops, icmp_ops;
+extern struct low_link_ops udp6_ops, udp_ops, icmp_ops;
 
 static int check_link_failure(int txretval)
 {
@@ -430,6 +430,10 @@ static int vpn_jni_alloc(JNIEnv *env, jclass clazz, int type)
 
 			case IPPROTO_UDP:
 				*link_ops = &udp_ops;
+				break;
+
+			case IPPROTO_IPV6:
+				*link_ops = &udp6_ops;
 				break;
 
 			default:

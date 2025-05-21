@@ -42,7 +42,7 @@ int icmp_low_link_recv_data(int devfd, void *buf, size_t len, struct sockaddr *l
 	struct sockaddr_in daddr = {};
 	size_t alen = sizeof(daddr);
 
-	int count = recvfrom(devfd, _plain_stream, sizeof(_plain_stream), MSG_DONTWAIT, &daddr, &alen);
+	int count = recvfrom(devfd, _plain_stream, sizeof(_plain_stream), MSG_DONTWAIT, (struct sockaddr *)&daddr, (socklen_t *)&alen);
 
 	if (count <= 0) return count;
 	if (count <= IPHDR_SKIP_LEN) return -1;
@@ -111,7 +111,7 @@ static int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struc
 	hdr->checksum = ip_checksum(_crypt_stream, len + sizeof(*hdr));
 
 	protect_reset(IPPROTO_ICMP, _crypt_stream, len, ll_addr, ll_len);
-	int iretval =  sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, &daddr, sizeof(struct sockaddr_in));
+	int iretval =  sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, (struct sockaddr *)&daddr, sizeof(struct sockaddr_in));
 	LOG_VERBOSE("iretval=%d", iretval);
 	// assert(iretval > 0);
 	return iretval; 

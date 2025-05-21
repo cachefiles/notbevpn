@@ -213,7 +213,7 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjus
 	uint32_t *v6addr = NULL;
 	struct sockaddr_in local4, remote4;
 
-	struct sockaddr_in6 *in6p = remote;
+	struct sockaddr_in6 *in6p = (struct sockaddr_in6 *)remote;
 	if (!IN6_IS_ADDR_V4MAPPED(&in6p->sin6_addr)) {
 		return mtu;
 	}
@@ -226,30 +226,30 @@ int update_tcp_mss(struct sockaddr *local, struct sockaddr *remote, size_t adjus
 
 	remote4.sin_port = in6p->sin6_port;
 	remote4.sin_family = AF_INET;
-	v6addr = &in6p->sin6_addr;
+	v6addr = (uint32_t *)&in6p->sin6_addr;
 	memcpy(&remote4.sin_addr, v6addr + 3, 4);
 
-	in6p = local;
+	in6p = (struct sockaddr_in6*) local;
 	local4.sin_port = in6p->sin6_port;
 	local4.sin_family = AF_INET;
-	v6addr = &in6p->sin6_addr;
+	v6addr = (uint32_t *)&in6p->sin6_addr;
 	memcpy(&local4.sin_addr, v6addr + 3, 4);
 
-	err = bind(udpfd, &local4, sizeof(local4));
+	err = bind(udpfd, (struct sockaddr *)&local4, sizeof(local4));
 	assert(err == 0);
 
 	if (set_dont_fragment(udpfd)) {
 		set_tcp_mss_by_mtu(1400 - 20 - adjust);
-		return;
+		return 0;
 	}
 
-	mtu = get_device_mtu(udpfd, &remote4, sizeof(remote4), 1500);
+	mtu = get_device_mtu(udpfd, (struct sockaddr *)&remote4, sizeof(remote4), 1500);
 	LOG_DEBUG("device mtu=%d %s", mtu, ntop6(&in6p->sin6_addr));
 
 	usleep(60000);
 
 	dev_mtu = 0;
-	mtu = get_device_mtu(udpfd, &remote4, sizeof(remote4), 1500);
+	mtu = get_device_mtu(udpfd, (struct sockaddr *)&remote4, sizeof(remote4), 1500);
 	close(udpfd);
 
 	LOG_DEBUG("path mtu=%d %s", mtu, ntop6(&in6p->sin6_addr));
