@@ -54,12 +54,11 @@ typedef struct _tcp_state_t {
 } tcp_state_t;
 
 static u_char type_len_map[8] = {0x0, 0x04, 0x0, 0x0, 0x10};
-#define RELAY_IPV4 0x01
-#define RELAY_IPV6 0x04
 
 int inet_4to6(void *dst, const void *src);
 int inet_6to4(void *dst, const void *src);
 
+#if 0
 static int set_relay_info(u_char *target, int type, void *host, u_short port)
 {      
 	int len;
@@ -78,6 +77,7 @@ static int set_relay_info(u_char *target, int type, void *host, u_short port)
 
 	return p - (char *)target;
 }
+#endif
 
 uint16_t get_client_id()
 {
@@ -153,7 +153,7 @@ static inline unsigned int ipv4_get_connection_match_hash(const void *src, const
 	uint32_t *dstp = (uint32_t *)dst;
 
 	hash = *srcp ^ *dstp ^ sport ^ dport;
-	return ((hash >> 16)^ hash) & HASH_MASK;
+	return ((hash >> 16) ^ hash) & HASH_MASK;
 }
 
 static inline unsigned int ipv6_get_connection_match_hash(const void *src, const void *dst, uint16_t sport, uint16_t dport)
@@ -549,10 +549,10 @@ static size_t ipv6_set_relay(void *buf, tcp_state_t *st)
 {
 	uint8_t v4map_addr[16];
 
-        memcpy(v4map_addr, &st->ip6_dst, 16);
-        NAT64_PREFIX_UPDATE(v4map_addr, NAT64_DST);
-        
-        return set_relay_info(buf, RELAY_IPV6, v4map_addr, st->th_dport);
+	memcpy(v4map_addr, &st->ip6_dst, 16);
+	NAT64_PREFIX_UPDATE(v4map_addr, NAT64_DST);
+
+	return set_relay_info(buf, RELAY_IPV6, v4map_addr, st->th_dport);
 }
 
 static nat_conntrack_ops ip6_conntrack_ops = {
@@ -615,6 +615,7 @@ static nat_conntrack_t * newconn_tcpup(struct tcpuphdr *hdr)
 	nat_conntrack_t *conn;
 
 	now = time(NULL);
+#if 0
 	tcpup_dooptions(&to, (u_char *)(hdr + 1), (hdr->th_opten << 2));
 	if (!CHECK_FLAGS(to.to_flags, TOF_DESTINATION)) {
 		return NULL;
@@ -623,6 +624,7 @@ static nat_conntrack_t * newconn_tcpup(struct tcpuphdr *hdr)
 	if (!tcpup_expand_dest(&sau, to.to_dsaddr, to.to_dslen)) {
 		return NULL;
 	}
+#endif
 
 	conn = ALLOC_NEW(nat_conntrack_t);
 	if (conn != NULL) {
@@ -701,7 +703,7 @@ ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 	unsigned cksum = 0;
 	nat_iphdr_t *ip = (nat_iphdr_t *)packet;
 
-	if (ip->ip_v == VERSION_IPV4) {
+	if (ip->ip_v == VERSION_IPV4) { 
 		cksum = tcpip_checksum(cksum, &ip->ip_dst, 4, 0);
 		cksum = tcpip_checksum(cksum, &ip->ip_src, 4, 0);
 		th->th_sum = tcp_checksum(cksum, th, sizeof(*th));
@@ -725,6 +727,7 @@ ssize_t tcp_frag_rst(nat_tcphdr_t *th, uint8_t *packet)
 	return d_off(th +1, packet);
 }
 
+uint32_t _tcpup_sum = 0;
 ssize_t tcpup_frag_rst(struct tcpuphdr *th, uint8_t *packet)
 {
 	int flags = th->th_flags;
@@ -746,11 +749,14 @@ ssize_t tcpup_frag_rst(struct tcpuphdr *th, uint8_t *packet)
 
 	th->th_opten = 0;
 	th->th_win = 0;
+	th->th_sum = tcp_checksum(_tcpup_sum, th, sizeof(*th));
 
+#if 0
 	u_short *ckpass = (u_short *)&th->th_ckpass;
 	th->th_ckpass = 0;
 	ckpass[0] = htons(sizeof(*th));
 	ckpass[1] = tcp_checksum(0, th, sizeof(*th));
+#endif
 
 	return sizeof(*th);
 }
@@ -800,17 +806,20 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 {
 	const uint8_t *data_start = NULL;
 
-	int count, offset;
+	int count, offset = 0;
 	struct tcpupopt to = {0};
 	struct tcpuphdr *up = (struct tcpuphdr *)_pkt_buf;
 
+#if 0
 	up->th_seq = th->th_seq;
 	up->th_ack = th->th_ack;
-	up->th_magic = MAGIC_UDP_TCP;
+	up->th_x2  = 0;
 
 	up->th_win   = th->th_win;
 	up->th_flags = th->th_flags;
+#if 0
 	up->th_ckpass= 0;
+#endif
 
 	count = (th->th_off << 2);
 	offset = tcpip_dooptions(&to, (u_char *)(th + 1), count - sizeof(*th));
@@ -842,17 +851,29 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 
 	data_start = ((uint8_t *)th) + (th->th_off << 2);
 	count = ((packet + len) - data_start);
+#endif
 
-	_tcpup_len = sizeof(*up) + offset + count;
+	if (th->th_flags & TH_SYN) {
+		(*ops->set_relay_info)(_null_, &conn->c);
+	}
+
+	data_start = (uint8_t *)th;
+	count = (packet + len) - data_start;
+
+	_tcpup_len = count;
 	assert(_tcpup_len < sizeof(_pkt_buf));
-	memcpy(((u_char *)(up + 1)) + offset, data_start, count);
+	memcpy(up, data_start, count);
 	_pkt_dest = conn->s.ip_dst.s_addr;
-
+	_tcpup_sum = csum_fold(up->th_conv) + csum_fold(conn->c.ip_sum)  + (uint16_t)~csum_fold(conn->s.ip_src.s_addr);
 	up->th_conv = conn->s.ip_src.s_addr;
+	// up->th_conv = csum_fold(up->th_conv);
+
+#if 0
 	u_short *ckpass = (u_short *)&up->th_ckpass;
 	assert(up->th_ckpass == 0);
 	ckpass[0] = htons(_tcpup_len);
 	ckpass[1] = tcp_checksum(0, _pkt_buf, _tcpup_len);
+#endif
 
 	if (count > 0 || CHECK_FLAGS(up->th_flags, TH_SYN| TH_FIN| TH_RST)) {
 		set_ack_type(count? ACK_TYPE_NEED: ACK_TYPE_MUST);
@@ -866,7 +887,7 @@ static int handle_client_to_server(nat_conntrack_t *conn, nat_conntrack_ops *ops
 
 		memcpy(conn->track_buf, up, sizeof(*up) + offset);
 		conn->track_len = sizeof(*tuh) + offset;
-#if 1
+#if 0
 		tuh->th_opten = 0;
 		conn->track_len = sizeof(*tuh);
 #endif
@@ -883,6 +904,7 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 	int count, offset;
 	struct tcpupopt to = {0};
 	nat_tcphdr_t *th = (nat_tcphdr_t *)(_tcp_buf + (*ops->get_hdr_len)());
+#if 0
 	memset(th, 0, sizeof(*th));
 
 	th->th_seq = up->th_seq;
@@ -922,7 +944,16 @@ static int handle_server_to_client(nat_conntrack_t *conn,
 
 	assert (ops == conn->ops);
 	th->th_sum = tcp_checksum(conn->c.ip_sum, th, sizeof(*th) + offset + count);
-	(*ops->set_hdr_buf)(_tcp_buf, IPPROTO_TCP, sizeof(*th) + offset + count, &conn->c);
+#endif
+	data_start = (uint8_t *)(up);
+	count = (packet + len) - data_start;
+	_tcpip_len = (*ops->get_hdr_len)() + count;
+
+	assert(_tcpip_len < sizeof(_tcp_buf));
+	memcpy(th, data_start, count);
+	th->th_sport = conn->c.th_dport;
+	th->th_dport = conn->c.th_sport;
+	(*ops->set_hdr_buf)(_tcp_buf, IPPROTO_TCP, count, &conn->c);
 
 	if (count > 0) {
 		conn->last_dir = DIRECT_SERVER_TO_CLIENT;
@@ -953,6 +984,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 		return 0;
 	}
 
+#if 0
 	u_short cksum = tcp_checksum(0, packet, len);
 	if (cksum != 0 && up->th_ckpass) {
 		log_error("invalid packet checksum: %x %x len=%d\n", cksum, up->th_ckpass, len);
@@ -965,6 +997,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 		log_error("invalid packet length: %x %x len=%d\n", ckpass[0], up->th_ckpass, len);
 		return 0;
 	}
+#endif
 
 	int hash_idx = up->th_conv;
 
@@ -1021,6 +1054,7 @@ ssize_t tcpup_frag_input(void *packet, size_t len, size_t limit)
 	}
 #undef TH_NEWCONN
 
+	fprintf(stderr, "TOFO:XXX tcp reset\n");
 	return tcpup_frag_rst(up, packet);
 
 found:
@@ -1213,12 +1247,21 @@ found:
 
 			memcpy(_pkt_buf, full_item->track_buf, _tcpup_len);
 			struct tcpuphdr *tuh = (struct tcpuphdr *)_pkt_buf;
-			tuh->th_seq = htonl(ntohl(tuh->th_seq) -1);
+			if (_tcpup_len <= (tuh->th_opten << 2)) {
+				tcp_seq oseq = ntohl(tuh->th_seq);
+				tuh->th_seq  = htonl(oseq - 1);
+			}
+			tuh->th_sum = tcp_checksum(full_item->c.ip_sum, tuh, _tcpup_len);
+			_tcpup_sum = full_item->c.ip_sum;
+#if 0
+			uint32_t sum = tuh->th_sum + csum_fold(oseq) + (uint16_t)~csum_fold(nseq);
+			tuh->th_sum = csum_fold(sum);
 
 			u_short *ckpass = (u_short *)&tuh->th_ckpass;
 			tuh->th_ckpass = 0;
 			ckpass[0] = htons(_tcpup_len);
 			ckpass[1] = tcp_checksum(0, _pkt_buf, _tcpup_len);
+#endif
 			log_error("tcpup_track_stage2: %ld, %p, %x %x %s\n",
 					_tcpup_len, full_item, full_item->c.flags, full_item->s.flags & TH_FIN, inet_ntoa(full_item->c.ip_dst));
 			full_item->probe++;

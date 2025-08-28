@@ -54,4 +54,12 @@ const char *ntop6(const void *v4ip);
 int inet_4to6(void *dst, const void *src);
 int inet_6to4(void *dst, const void *src);
 
+struct link_header {
+	uint16_t ident, flags;
+	uint16_t qn, an, xn, yn;
+	uint32_t content;
+};
+
+size_t parse_link_header(uint8_t *packet, size_t len);
+size_t get_link_header(void **ptr);
 #endif

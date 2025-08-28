@@ -3,15 +3,14 @@
 
 struct tcpuphdr {  
         tcp_seq th_conv;  
-        tcp_seq th_ckpass;  
         tcp_seq th_seq;  
         tcp_seq th_ack;  
 #if __BYTE_ORDER == __LITTLE_ENDIAN  
-        u_char th_magic: 4;  
+        u_char th_x2: 4;
         u_char th_opten: 4;  
 #else  
         u_char th_opten: 4;  
-        u_char th_magic: 4;  
+        u_char th_x2: 4;
 #endif  
         u_char th_flags;  
   
@@ -24,7 +23,9 @@ struct tcpuphdr {
 #  define TH_URG    0x20  
 #endif  
   
-        u_short th_win;  
+        u_short th_win;
+        u_short th_sum;                 /* checksum */
+        u_short th_urp;                 /* urgent pointer */
 };
 
 #define MAGIC_UDP_TCP 0x0E
@@ -99,4 +100,15 @@ unsigned tcpip_checksum(unsigned cksum,  const void *buf, size_t len, int finish
 int udp_checksum(unsigned cksum, void *buf, size_t len);
 int tcp_checksum(unsigned cksum, void *buf, size_t len);
 int ip_checksum(void *buf, size_t len);
+
+inline static uint16_t csum_fold(uint32_t val)
+{
+	while (val >> 16)
+		val = (val >> 16) + (val & 0xffff);
+	return val;
+}
+
+#define RELAY_IPV4 0x01
+#define RELAY_IPV6 0x04
+int set_relay_info(u_char *target, int type, void *host, u_short port);
 #endif

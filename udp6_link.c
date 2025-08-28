@@ -28,7 +28,7 @@ static int udp_low_link_create(void)
 
 	devfd = socket(AF_INET6, SOCK_DGRAM, 0);
 
-	LOG_DEBUG("UDP created: %d %d\n", devfd, _ack_count);
+	LOG_DEBUG("IP6 UDP created: %d %d\n", devfd, _ack_count);
 	TUNNEL_PADDIND_DNS[2] &= ~0x80;
 	TUNNEL_PADDIND_DNS[3] &= ~0x80;
 
@@ -50,16 +50,16 @@ static int udp_low_link_recv_data(int devfd, void *buf, size_t len, struct socka
 
 	if (count <= 0) return count;
 
+	size_t link_length = parse_link_header(_plain_stream, count);
+
 	packet = _plain_stream;
+	if (count <= link_length) return -1;
+	count -= link_length;
 
-
-	if (count <= LEN_PADDING_DNS) return -1;
-	count -= LEN_PADDING_DNS;
-
-	LOG_VERBOSE("recv: %ld\n", count + LEN_PADDING_DNS);
+	LOG_VERBOSE("recv: %ld\n", count + link_length);
 	memcpy(&key, &packet[14], sizeof(key));
 	count = MIN(count, len);
-	packet_decrypt(htons(key), buf, packet + LEN_PADDING_DNS, count);
+	packet_decrypt(htons(key), buf, packet + link_length, count);
 
 	_ack_start_time = 0;
 	_ack_count = 0;
@@ -72,23 +72,26 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 	int err = 0;
 	unsigned short key = rand();
 	uint8_t _crypt_stream[MAX_PACKET_SIZE];
+	uint8_t *header = NULL;
 
-	assert (len + LEN_PADDING_DNS < sizeof(_crypt_stream));
-	memcpy(_crypt_stream, TUNNEL_PADDIND_DNS, LEN_PADDING_DNS);
+	size_t len_padding_dns = get_link_header(&header);
+	assert (len + len_padding_dns < sizeof(_crypt_stream));
+	memcpy(_crypt_stream, header, len_padding_dns);
 	// memcpy(_crypt_stream + 14, &key, 2);
-	packet_encrypt(htons(key), _crypt_stream + LEN_PADDING_DNS, buf, len);
+	packet_encrypt(htons(key), _crypt_stream + len_padding_dns, buf, len);
 
 	if (get_ack_type() != ACK_TYPE_NONE) {
 		if (++_ack_count < 11) {
 			_ack_start_time = time(NULL);
 		} else if (_ack_start_time + 2 < time(NULL)) {
-			sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, ll_len);
+			sendto(devfd, _crypt_stream, len + len_padding_dns, 0, ll_addr, ll_len);
 			return -1;
 		}
 	}
 
 	protect_reset(IPPROTO_UDP, _crypt_stream, len, ll_addr, ll_len);
-	err = sendto(devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in6)));
+	err = sendto(devfd, _crypt_stream, len + len_padding_dns, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in6)));
+
 	// fix_path_mtu(err, devfd, _crypt_stream, len + LEN_PADDING_DNS, 0, ll_addr, MIN(ll_len, sizeof(struct sockaddr_in6)));
 
 	return err;

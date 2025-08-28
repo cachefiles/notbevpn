@@ -4,8 +4,10 @@
 #include <base_link.h>
 
 #include <config.h>
+#include <bsdinet/tcpup.h>
 
 static int _ack_type = ACK_TYPE_NONE;
+extern uint32_t _tcpup_sum;
 
 int get_ack_type()
 {
@@ -107,4 +109,91 @@ const char *ntop6(const void *v6ip)
 {
 	static char buf[256];
 	return inet_ntop(AF_INET6, v6ip, buf, sizeof(buf));
+}
+
+static unsigned char dns_filling_byte[] = {
+	0xf1, 0xb0, 0x01, 0x20, 0x00, 0x01, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x02, 'c',  'n',  0x00,
+	0x00, 0x01, 0x00, 0x01
+};
+
+static uint8_t dns_filling_ipv4[] = {
+	0xf1, 0xb0, 0x01, 0x20, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00,
+	0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00
+};
+
+static uint8_t dns_filling_ipv6[] = {
+	0xf1, 0xb0, 0x01, 0x20, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x1c, 0x00,
+	0x01, 0x00, 0x00, 0x1c, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+static int dns_filling_len = sizeof(dns_filling_byte);
+static void *dns_filling_buf = dns_filling_byte;
+
+size_t get_link_header(void **ptr)
+{
+	size_t retval = dns_filling_len;
+	*ptr = dns_filling_buf;
+
+	*(uint16_t *)dns_filling_buf = csum_fold(_tcpup_sum);
+
+	dns_filling_len = sizeof(dns_filling_byte);
+	dns_filling_buf = dns_filling_byte;
+	return retval;
+}
+
+int set_relay_info(u_char *target, int type, void *host, u_short port)
+{
+	(void)target;
+
+	if (type == RELAY_IPV4) {
+		memcpy(dns_filling_ipv4 + 0x18, &port, 2);
+		memcpy(dns_filling_ipv4 + 0x1c, host, 4);
+		dns_filling_len = sizeof(dns_filling_ipv4);
+		dns_filling_buf = dns_filling_ipv4;
+	} else if (type == RELAY_IPV6) {
+		memcpy(dns_filling_ipv6 + 0x18, &port, 2);
+		memcpy(dns_filling_ipv6 + 0x1c, host, 16);
+		dns_filling_len = sizeof(dns_filling_ipv6);
+		dns_filling_buf = dns_filling_ipv6;
+	}
+
+	return 0;
+}
+
+size_t parse_link_header(uint8_t *packet, size_t len)
+{
+	uint32_t link_magic = 0x2636e00;
+	struct link_header *link = (struct link_header *)packet;
+
+	if (link->yn == htons(1)) {
+		switch(packet[14]) {
+			case 0x1c:
+#if 0
+				memcpy(builtin_target6 + 2, packet + 0x18, 2);
+				memcpy(builtin_target6 + 4, packet + 0x1c, 16);
+#endif
+				LOG_DEBUG("IPV6 HEADER");
+				return sizeof(dns_filling_ipv6);
+
+			case 0x1:
+#if 0
+				memcpy(builtin_target + 2, packet + 0x18, 2);
+				memcpy(builtin_target + 4, packet + 0x1c, 4);
+#endif
+				LOG_DEBUG("IPV4 HEADER");
+				return sizeof(dns_filling_ipv4);
+
+			default:
+				LOG_DEBUG("BAD HEADER");
+				return len;
+		}
+	}
+
+	if (link->content == htonl(link_magic)) {
+		return sizeof(dns_filling_byte);
+	}
+
+	return len;
 }
