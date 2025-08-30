@@ -111,7 +111,7 @@ static int icmp_low_link_send_data(int devfd, void *buf, size_t len, const struc
 	hdr->checksum = ip_checksum(_crypt_stream, len + sizeof(*hdr));
 
 	protect_reset(IPPROTO_ICMP, _crypt_stream, len, ll_addr, ll_len);
-	int iretval =  sendto(devfd, _crypt_stream, len + sizeof(*hdr), 0, (struct sockaddr *)&daddr, sizeof(struct sockaddr_in));
+	int iretval =  sendto(devfd, _crypt_stream, len + sizeof(*hdr), len < 512? MSG_DONTWAIT: 0, (struct sockaddr *)&daddr, sizeof(struct sockaddr_in));
 	LOG_VERBOSE("iretval=%d", iretval);
 	// assert(iretval > 0);
 	return iretval; 
@@ -131,11 +131,12 @@ static int icmp_low_link_create(void)
 		IPHDR_SKIP_LEN = 20;
 	}
 
-	bufsiz = 384 * 1024;
+	bufsiz = (1 << 20);
 	setsockopt(devfd, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
+	bufsiz = 768 * 1024;
 	setsockopt(devfd, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
 
-	setblockopt(devfd, 0);
+	// setblockopt(devfd, 0);
 	return devfd;
 }
 

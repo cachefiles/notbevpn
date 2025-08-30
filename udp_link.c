@@ -30,11 +30,12 @@ static int udp_low_link_create(void)
 	TUNNEL_PADDIND_DNS[2] &= ~0x80;
 	TUNNEL_PADDIND_DNS[3] &= ~0x80;
 
-	bufsiz = 384 * 1024;
+	bufsiz = (1 << 20);
 	setsockopt(devfd, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
+	bufsiz = 768 * 1024;
 	setsockopt(devfd, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
 
-	setblockopt(devfd, 0);
+	// setblockopt(devfd, 0);
 	_ack_count = 0;
 	return devfd;
 }
@@ -95,7 +96,7 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 	}
 
 	protect_reset(IPPROTO_UDP, _crypt_stream, len, ll_addr, ll_len);
-	return sendto(devfd, _crypt_stream, len + len_padding_dns, 0, ll_addr, ll_len);
+	return sendto(devfd, _crypt_stream, len + len_padding_dns, len < 512? MSG_DONTWAIT: 0, ll_addr, ll_len);
 }
 
 static int udp_low_link_adjust(void)

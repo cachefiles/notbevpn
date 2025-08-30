@@ -308,7 +308,7 @@ static int vpn_run_loop(int tunfd, int netfd, int dnsfd, struct low_link_ops *li
 			socklen_t tmp_alen = sizeof(tmp_addr);
 			test++;
 
-			len = recvfrom(dnsfd, packet, bufsize, 0, SOT(&tmp_addr), &tmp_alen); 
+			len = recvfrom(dnsfd, packet, bufsize, MSG_DONTWAIT, SOT(&tmp_addr), &tmp_alen); 
 			if (len < 0) {
 				LOG_VERBOSE("read dnsfd failure fd=%d, error: %s, %d/%d\n", dnsfd, strerror(errno), net_nbytes, net_npacket);
 				FD_CLR(dnsfd, &readfds);
