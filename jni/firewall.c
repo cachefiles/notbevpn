@@ -144,6 +144,9 @@ int check_blocked_silent(int tunfd, int dnsfd, char *packet, size_t len, time_t 
 }
 
 #define tun_write write
+const uint8_t dns64_prefix[16] = {
+	0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 127, 9, 9, 9
+};
 
 int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *failure_try)
 {
@@ -161,17 +164,13 @@ int check_blocked_normal(int tunfd, int dnsfd, char *packet, size_t len, int *fa
 		return 0;
 	}
 
-	const uint8_t nat64_prefix[16] = {
-		0, 0x64, 0xff, 0x9b, 0
-	};
-
 	if (ip6->ip6_nxt == IPPROTO_UDP) {
 		uh = (nat_udphdr_t *)(ip6 + 1);
 
 		switch(htons(uh->uh_dport)) {
 			case 53:
 				
-				nswrap = !memcmp(&ip6->ip6_dst, nat64_prefix, 8);
+				nswrap = !memcmp(&ip6->ip6_dst, dns64_prefix, 16);
 #ifdef __ANDROID__
 				istether = 0; // is_tethering_dns(ip6->ip6_dst);
 #endif

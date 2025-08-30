@@ -78,7 +78,7 @@ static int udp_low_link_send_data(int devfd, void *buf, size_t len, const struct
 	// memcpy(_crypt_stream + 14, &key, 2);
 
 	uint16_t *data_sum = (uint16_t *)header;
-	if (tcp_checksum(data_sum[0], buf, len)) {
+	if (htonl(*(uint32_t*)buf) != TCPUP_PROTO_UDP && tcp_checksum(data_sum[0], buf, len)) {
 		LOG_DEBUG("checksum %x %x %d", tcp_checksum(data_sum[0], buf, len), data_sum, len);
 		return -1;
 	}
